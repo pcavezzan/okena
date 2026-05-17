@@ -80,7 +80,9 @@ impl DiffViewer {
 
     /// Store raw diff data and extract lightweight stats (no syntax highlighting).
     fn store_diff_result(&mut self, result: DiffResult) {
-        for file in result.files {
+        let mut files = result.files;
+        files.sort_by(|a, b| a.display_name().cmp(b.display_name()));
+        for file in files {
             self.file_stats.push(FileStats::from(&file));
             self.raw_files.push(file);
         }
