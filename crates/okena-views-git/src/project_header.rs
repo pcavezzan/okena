@@ -134,10 +134,10 @@ fn render_sign_count(sign: &str, count: usize, color: u32, alpha: f32) -> Div {
 ///
 /// - `↑N` (green) — commits ahead of the upstream tracking branch
 /// - `↓M` (yellow) — commits behind the upstream tracking branch
-/// - `⇡K` (blue, dashed arrow) — commits not on `origin/<branch>`. Only shown
-///   when the count differs from `ahead` (i.e. upstream isn't the branch's
-///   own remote — typical worktree case), so it doesn't double up in the
-///   common case where `↑N` already means "to push".
+/// - `↟K` (cyan, double-headed) — commits not on `origin/<branch>`. Only
+///   shown when the count differs from `ahead` (i.e. upstream isn't the
+///   branch's own remote — typical worktree case), so it doesn't double up
+///   in the common case where `↑N` already means "to push".
 ///
 /// Zero-count sides are hidden. Returns `None` when nothing is worth showing.
 pub fn render_ahead_behind_badge(
@@ -166,7 +166,7 @@ pub fn render_ahead_behind_badge(
                 d.child(render_sign_count("\u{2193}", b, t.term_yellow, 0.7))
             })
             .when(show_unpushed, |d| {
-                d.child(render_sign_count("\u{21E1}", u, t.term_blue, 0.7))
+                d.child(render_sign_count("\u{219F}", u, t.term_cyan, 0.7))
             })
             .tooltip(move |window, cx| Tooltip::new(tooltip_text.clone()).build(window, cx))
             .into_any_element(),
