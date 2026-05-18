@@ -131,6 +131,16 @@ pub fn resolve_active_profile(flag_id: Option<String>) -> Result<ProfilePaths> {
             // No profiles.json — first ever run. Bootstrap default profile.
             // Migration is handled by the caller (main.rs) after init_profile.
             let idx = bootstrap_default_profile(&root)?;
+            if let Some(req) = &requested {
+                if req != "default" {
+                    bail!(
+                        "Profile '{req}' not found. This appears to be a first launch; \
+                         the 'default' profile was just created.\n\
+                         Run `okena --new-profile {req}` to create it, \
+                         or omit --profile to use 'default'."
+                    );
+                }
+            }
             return make_profile_paths(&idx.profiles[0], &root);
         }
     };
