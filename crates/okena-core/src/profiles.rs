@@ -218,6 +218,28 @@ pub fn create_profile(display_name: &str) -> Result<String> {
     let home = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Cannot create profile: home directory not found"))?;
     let claude_dir = home.join(format!(".claude-{id}"));
+
+    // Create the profile directory and write the default settings.json snippet
+    // BEFORE updating the index. If any of these fs operations fail, the index
+    // stays clean instead of pointing at a half-built profile root.
+    let profile_root = root.join("profiles").join(&id);
+    std::fs::create_dir_all(&profile_root)?;
+    let settings_path = profile_root.join("settings.json");
+    if !settings_path.exists() {
+        let settings_json = serde_json::json!({
+            "version": 3,
+            "extension_settings": {
+                "claude-code": {
+                    "config_dir": claude_dir.to_string_lossy()
+                }
+            }
+        });
+        std::fs::write(
+            &settings_path,
+            serde_json::to_string_pretty(&settings_json)?,
+        )?;
+    }
+
     let entry = ProfileEntry {
         id: id.clone(),
         display_name: display_name.to_string(),
@@ -227,26 +249,6 @@ pub fn create_profile(display_name: &str) -> Result<String> {
     };
     index.profiles.push(entry);
     index.save(&root)?;
-
-    // Create the profile directory and write a default settings.json snippet
-    // so the Claude extension picks up the right config_dir immediately.
-    let profile_root = root.join("profiles").join(&id);
-    std::fs::create_dir_all(&profile_root)?;
-    let settings_json = serde_json::json!({
-        "version": 3,
-        "extension_settings": {
-            "claude-code": {
-                "config_dir": claude_dir.to_string_lossy()
-            }
-        }
-    });
-    let settings_path = profile_root.join("settings.json");
-    if !settings_path.exists() {
-        std::fs::write(
-            &settings_path,
-            serde_json::to_string_pretty(&settings_json)?,
-        )?;
-    }
 
     Ok(id)
 }
