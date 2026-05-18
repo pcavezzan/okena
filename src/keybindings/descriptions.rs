@@ -11,7 +11,7 @@ use super::{
     ShowContentSearch, ShowFileSearch, ShowHookLog, ShowKeybindings, ShowProjectSwitcher, ShowSessionManager,
     ShowSettings, ShowThemeSelector, SplitHorizontal, SplitVertical, StartAllServices,
     StopAllServices, ToggleFullscreen, TogglePaneSwitcher, ToggleSidebar, ToggleSidebarAutoHide,
-ZoomIn, ZoomOut, EqualizeLayout, ShowBranchSwitcher, ShowProfileManager,
+    ZoomIn, ZoomOut, EqualizeLayout, ShowBranchSwitcher, ShowProfileManager,
 };
 
 /// Get human-readable descriptions for all actions
