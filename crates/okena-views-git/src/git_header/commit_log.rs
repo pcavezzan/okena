@@ -6,7 +6,7 @@ use crate::project_header;
 
 use okena_core::theme::ThemeColors;
 use okena_core::types::DiffMode;
-use okena_git::{self as git, CommitLogEntry, GraphRow};
+use okena_git::CommitLogEntry;
 use okena_ui::tokens::{ui_text_ms, ui_text_sm};
 use okena_workspace::requests::{OverlayRequest, ProjectOverlay, ProjectOverlayKind};
 
@@ -53,7 +53,7 @@ impl GitHeader {
 
             let _ = this.update(cx, |this, cx| {
                 this.commit_log_loading = false;
-                let commit_count = entries.iter().filter(|r| matches!(r, git::GraphRow::Commit(_))).count();
+                let commit_count = entries.len();
                 this.commit_log_has_more = commit_count >= page;
                 this.commit_log_count = commit_count;
                 this.commit_log_entries = entries;
@@ -85,7 +85,7 @@ impl GitHeader {
 
             let _ = this.update(cx, |this, cx| {
                 this.commit_log_loading = false;
-                let commit_count = entries.iter().filter(|r| matches!(r, git::GraphRow::Commit(_))).count();
+                let commit_count = entries.len();
                 this.commit_log_has_more = commit_count >= page;
                 this.commit_log_count = commit_count;
                 this.commit_log_entries = entries;
@@ -117,7 +117,7 @@ impl GitHeader {
 
             let _ = this.update(cx, |this, cx| {
                 this.commit_log_loading = false;
-                let commit_count = entries.iter().filter(|r| matches!(r, git::GraphRow::Commit(_))).count();
+                let commit_count = entries.len();
                 this.commit_log_has_more = commit_count >= new_total;
                 this.commit_log_count = commit_count;
                 this.commit_log_entries = entries;
@@ -163,14 +163,11 @@ impl GitHeader {
                 if self.commit_log_entries.is_empty() {
                     None
                 } else {
-                    let all_commits: Vec<CommitLogEntry> = self.commit_log_entries.iter()
-                        .filter_map(|r| match r { GraphRow::Commit(e) => Some(e.clone()), _ => None })
-                        .collect();
-                    Some(Arc::new(move |hash: &str, msg: &str, _commit_idx: usize, _window: &mut Window, cx: &mut App| {
+                    let all_commits: Vec<CommitLogEntry> = self.commit_log_entries.clone();
+                    Some(Arc::new(move |hash: &str, msg: &str, commit_idx: usize, _window: &mut Window, cx: &mut App| {
                         let commit_hash = hash.to_string();
                         let commit_msg = msg.to_string();
                         let commits_vec = all_commits.clone();
-                        let commit_idx = commits_vec.iter().position(|c| c.hash == commit_hash).unwrap_or(0);
                         let _ = entity_handle.update(cx, |this: &mut GitHeader, cx| {
                             this.hide_commit_log(cx);
                         });

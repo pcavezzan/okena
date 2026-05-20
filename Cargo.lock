@@ -5785,6 +5785,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "log",
+ "lyon",
  "okena-core",
  "okena-extensions",
  "okena-files",

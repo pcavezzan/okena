@@ -319,12 +319,12 @@ pub fn execute_action(
             match ws.project(&project_id) {
                 Some(p) => {
                     let path = p.path.clone();
-                    let entries = crate::git::get_commit_graph(
+                    let entries = crate::git::fetch_commit_log(
                         std::path::Path::new(&path),
                         count,
                         branch.as_deref(),
                     );
-                    ActionResult::Ok(Some(serde_json::to_value(entries).expect("BUG: GraphRow must serialize")))
+                    ActionResult::Ok(Some(serde_json::to_value(entries).expect("BUG: CommitLogEntry must serialize")))
                 }
                 None => ActionResult::Err(format!("project not found: {}", project_id)),
             }

@@ -2,6 +2,7 @@
 
 pub mod blame;
 pub mod branch_names;
+pub mod commit_graph;
 pub mod diff;
 pub mod error;
 pub(crate) mod gix_helpers;
@@ -9,6 +10,7 @@ pub mod repository;
 
 pub use blame::{get_blame, BlameCommit, BlameError, BlameKind, BlameLine};
 pub use error::{GitError, GitResult};
+pub use commit_graph::fetch_commit_log;
 pub use diff::{DiffResult, DiffMode, FileDiff, DiffLineType, get_diff_with_options, is_git_repo, get_file_contents_for_diff};
 pub use repository::{
     create_worktree,
@@ -35,7 +37,6 @@ pub use repository::{
     push_branch,
     count_unpushed_commits,
     count_ahead_behind,
-    get_commit_graph,
     list_branches,
     list_branches_classified,
     BranchList,
@@ -230,32 +231,22 @@ impl GitStatus {
     }
 }
 
-/// A single commit entry for the commit log popover.
+/// A single commit entry for the commit log popover. The DAG topology is
+/// reconstructed on the consumer side from `parents`; no graph art is stored.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CommitLogEntry {
-    /// Short hash (7 chars)
+    /// Short hash (7 chars). Used as the entry's identity for lane layout.
     pub hash: String,
+    /// Short hashes of parent commits (first = first parent).
+    pub parents: Vec<String>,
     /// Commit subject (first line)
     pub message: String,
     /// Author name
     pub author: String,
     /// Unix timestamp of the commit
     pub timestamp: i64,
-    /// Whether this is a merge commit (2+ parents)
-    #[allow(dead_code)] // used in tests
-    pub is_merge: bool,
-    /// Graph prefix characters (e.g. "| * |")
-    pub graph: String,
     /// Ref decorations (e.g. "HEAD -> main", "origin/main", "tag: v1.0")
     pub refs: Vec<String>,
-}
-
-/// A row in the commit graph — either a commit or a graph connector line.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum GraphRow {
-    Commit(CommitLogEntry),
-    /// Graph-only connector line (e.g. "|\ ", "|/ ")
-    Connector(String),
 }
 
 /// Format a Unix timestamp as compact relative time.

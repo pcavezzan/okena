@@ -17,14 +17,11 @@ mod branch_status;
 mod commit_log;
 mod diff_tree;
 mod graph;
+mod lane_layout;
 
 pub use branch_status::{render_branch_status, BranchStatusCallbacks};
-pub use commit_log::{render_commit_log_content, render_commit_log_header};
+pub use commit_log::render_commit_log_content;
 pub use diff_tree::render_diff_file_list_interactive;
-pub use graph::{
-    render_graph_column, render_graph_row, render_ref_label,
-    COMMIT_ROW_H, CONNECTOR_ROW_H, DOT_SIZE, GRAPH_CELL_W, RAIL_W,
-};
 
 // ── Theme-dependent color traits ────────────────────────────────────────────
 

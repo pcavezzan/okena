@@ -1,28 +1,43 @@
-//! Git graph rendering: railway-style commit graph used by the commit log
-//! popover. Each character of the textual `graph` string is drawn as one or
-//! more absolutely-positioned rails/dots in a lane-coloured palette.
+//! Per-row renderer for the railway commit graph.
+//!
+//! Layout responsibility lives in [`super::lane_layout`]; this file just
+//! paints what the layout computed. Each `LaneRow` is rendered in its own
+//! container with its own rails canvas. Rails are split into an upper half
+//! (top edge → vertical middle) and a lower half (middle → bottom edge), so
+//! merges fan in above the dot and forks fan out below it, all inside the
+//! single row.
+//!
+//! Hover is a plain `.hover()` background on the row: GPUI paints a
+//! container's quad *before* its children, so the tint sits behind the rails
+//! canvas (rails stay visible on top, which is the intended look) — no
+//! `deferred`/`paint_layer` tricks needed.
+
+use super::lane_layout::{Half, LaneId, LaneRow, Rail};
 
 use okena_core::theme::ThemeColors;
-use okena_git::{CommitLogEntry, GraphRow};
 use okena_ui::tokens::{ui_text_md, ui_text_ms, ui_text_sm};
 
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::h_flex;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Width of each graph character column in pixels.
-pub const GRAPH_CELL_W: f32 = 10.0;
+/// Width of each lane in pixels (centre-to-centre distance between two
+/// adjacent display columns).
+const GRAPH_CELL_W: f32 = 12.0;
 /// Thickness of railway lines.
-pub const RAIL_W: f32 = 2.0;
+const RAIL_W: f32 = 2.0;
 /// Diameter of commit dots.
-pub const DOT_SIZE: f32 = 8.0;
+const DOT_SIZE: f32 = 8.0;
 /// Commit row height.
-pub const COMMIT_ROW_H: f32 = 24.0;
-/// Connector row height.
-pub const CONNECTOR_ROW_H: f32 = 10.0;
+const COMMIT_ROW_H: f32 = 28.0;
 
-/// Lane color palette for graph railways.
+/// Horizontal padding before the graph column inside each row.
+pub(super) const GRAPH_PAD_LEFT: f32 = 4.0;
+
+/// Lane color palette. We pick by `palette_idx % len`, where `palette_idx`
+/// is the lane's assigned color (stable for the lane's lifetime).
 const LANE_COLORS: &[fn(&ThemeColors) -> u32] = &[
     |t| t.term_cyan,
     |t| t.term_green,
@@ -32,176 +47,87 @@ const LANE_COLORS: &[fn(&ThemeColors) -> u32] = &[
     |t| t.term_red,
 ];
 
-fn lane_color(lane_idx: usize, t: &ThemeColors) -> u32 {
-    LANE_COLORS[lane_idx % LANE_COLORS.len()](t)
+fn lane_color(lane_id: LaneId, palette: &BTreeMap<LaneId, usize>, t: &ThemeColors) -> u32 {
+    let idx = palette.get(&lane_id).copied().unwrap_or(lane_id as usize);
+    LANE_COLORS[idx % LANE_COLORS.len()](t)
 }
 
-/// Render graph prefix as a single relatively-positioned container with
-/// absolutely-positioned railway elements. This ensures lines connect
-/// across lane centers regardless of character cell boundaries.
-pub fn render_graph_column(graph: &str, max_len: usize, row_h: f32, t: &ThemeColors) -> Div {
-    let padded: String = if graph.len() < max_len {
-        format!("{:<width$}", graph, width = max_len)
-    } else {
-        graph.to_string()
-    };
-
-    // X coordinate of the rail's left edge for a given column position
-    let rail_x = |pos: usize| -> f32 {
-        pos as f32 * GRAPH_CELL_W + (GRAPH_CELL_W - RAIL_W) / 2.0
-    };
-
-    let mid_y = (row_h - RAIL_W) / 2.0;
-
-    let mut elements: Vec<AnyElement> = Vec::new();
-
-    for (pos, ch) in padded.chars().enumerate() {
-        let lane_idx = pos / 2;
-        let color = lane_color(lane_idx, t);
-
-        match ch {
-            '|' => {
-                // Vertical rail -- full height at lane center
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(rail_x(pos)))
-                        .top(px(0.0))
-                        .w(px(RAIL_W))
-                        .h(px(row_h))
-                        .bg(rgb(color))
-                        .into_any_element(),
-                );
-            }
-            '*' => {
-                // Vertical rail through entire row
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(rail_x(pos)))
-                        .top(px(0.0))
-                        .w(px(RAIL_W))
-                        .h(px(row_h))
-                        .bg(rgb(color))
-                        .into_any_element(),
-                );
-                // Dot on top, centered
-                let dot_x = pos as f32 * GRAPH_CELL_W + (GRAPH_CELL_W - DOT_SIZE) / 2.0;
-                let dot_y = (row_h - DOT_SIZE) / 2.0;
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(dot_x))
-                        .top(px(dot_y))
-                        .w(px(DOT_SIZE))
-                        .h(px(DOT_SIZE))
-                        .rounded(px(DOT_SIZE / 2.0))
-                        .bg(rgb(color))
-                        .into_any_element(),
-                );
-            }
-            '\\' => {
-                // Fork: S-curve from left lane (top) to right lane (bottom)
-                let diag_color = lane_color((pos + 1) / 2, t);
-                let lx = rail_x(pos.saturating_sub(1));
-                let rx = rail_x(pos + 1);
-
-                // Top vertical: left lane center -> middle
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(lx))
-                        .top(px(0.0))
-                        .w(px(RAIL_W))
-                        .h(px(mid_y + RAIL_W))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-                // Horizontal bridge: left lane center -> right lane center
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(lx))
-                        .top(px(mid_y))
-                        .w(px(rx + RAIL_W - lx))
-                        .h(px(RAIL_W))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-                // Bottom vertical: right lane center -> bottom
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(rx))
-                        .top(px(mid_y))
-                        .w(px(RAIL_W))
-                        .h(px(row_h - mid_y))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-            }
-            '/' => {
-                // Merge: S-curve from right lane (top) to left lane (bottom)
-                let diag_color = lane_color((pos + 1) / 2, t);
-                let lx = rail_x(pos.saturating_sub(1));
-                let rx = rail_x(pos + 1);
-
-                // Top vertical: right lane center -> middle
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(rx))
-                        .top(px(0.0))
-                        .w(px(RAIL_W))
-                        .h(px(mid_y + RAIL_W))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-                // Horizontal bridge
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(lx))
-                        .top(px(mid_y))
-                        .w(px(rx + RAIL_W - lx))
-                        .h(px(RAIL_W))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-                // Bottom vertical: left lane center -> bottom
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(lx))
-                        .top(px(mid_y))
-                        .w(px(RAIL_W))
-                        .h(px(row_h - mid_y))
-                        .bg(rgb(diag_color))
-                        .into_any_element(),
-                );
-            }
-            '_' => {
-                // Horizontal connector
-                elements.push(
-                    div()
-                        .absolute()
-                        .left(px(pos as f32 * GRAPH_CELL_W))
-                        .top(px(mid_y))
-                        .w(px(GRAPH_CELL_W))
-                        .h(px(RAIL_W))
-                        .bg(rgb(color))
-                        .into_any_element(),
-                );
-            }
-            _ => {} // space -- nothing
+/// Build a stable color palette: assign each `lane_id` an index in order of
+/// first appearance so adjacent lanes don't clash too often.
+pub(super) fn build_palette(rows: &[LaneRow]) -> BTreeMap<LaneId, usize> {
+    let mut palette: BTreeMap<LaneId, usize> = BTreeMap::new();
+    for row in rows {
+        let next = palette.len();
+        palette.entry(row.dot.1).or_insert(next);
+        for rail in &row.rails {
+            let next = palette.len();
+            palette.entry(rail.lane_id).or_insert(next);
         }
     }
+    palette
+}
 
-    div().relative().flex_shrink_0().children(elements)
+fn col_x(col: usize) -> f32 {
+    col as f32 * GRAPH_CELL_W + GRAPH_CELL_W / 2.0
+}
+
+fn stroke(window: &mut Window, color: u32, build: impl FnOnce(&mut PathBuilder)) {
+    let options = StrokeOptions::default()
+        .with_line_width(RAIL_W)
+        .with_line_join(lyon::path::LineJoin::Round)
+        .with_line_cap(lyon::path::LineCap::Round);
+    let mut b = PathBuilder::stroke(px(RAIL_W)).with_style(PathStyle::Stroke(options));
+    build(&mut b);
+    if let Ok(path) = b.build() {
+        window.paint_path(path, rgb(color));
+    }
+}
+
+/// Paint one row's rails into the given bounds origin. Upper rails span
+/// `[oy, oy+H/2]`, lower rails span `[oy+H/2, oy+H]`.
+fn paint_rails(
+    window: &mut Window,
+    ox: f32,
+    oy: f32,
+    row_h: f32,
+    rails: &[Rail],
+    palette: &BTreeMap<LaneId, usize>,
+    t: &ThemeColors,
+) {
+    let mid_y = oy + row_h / 2.0;
+
+    for rail in rails {
+        let (y_start, y_end) = match rail.half {
+            Half::Upper => (oy, mid_y),
+            Half::Lower => (mid_y, oy + row_h),
+        };
+        let x_start = ox + col_x(rail.from_col);
+        let x_end = ox + col_x(rail.to_col);
+        let color = lane_color(rail.lane_id, palette, t);
+
+        if (x_start - x_end).abs() < 0.01 {
+            stroke(window, color, |b| {
+                b.move_to(point(px(x_start), px(y_start)));
+                b.line_to(point(px(x_start), px(y_end)));
+            });
+        } else {
+            // Cubic bezier with vertical tangents at both ends so the curve
+            // chains smoothly into the vertical rails above / below.
+            let y_ctrl = (y_start + y_end) / 2.0;
+            stroke(window, color, |b| {
+                b.move_to(point(px(x_start), px(y_start)));
+                b.cubic_bezier_to(
+                    point(px(x_end), px(y_end)),
+                    point(px(x_start), px(y_ctrl)),
+                    point(px(x_end), px(y_ctrl)),
+                );
+            });
+        }
+    }
 }
 
 /// Render a ref label pill (e.g. "HEAD -> main", "origin/main", "tag: v1.0").
-pub fn render_ref_label(ref_name: &str, t: &ThemeColors, cx: &App) -> AnyElement {
+fn render_ref_label(ref_name: &str, t: &ThemeColors, cx: &App) -> AnyElement {
     let color = if ref_name.contains("HEAD") {
         t.term_cyan
     } else if ref_name.starts_with("tag:") {
@@ -230,86 +156,109 @@ pub fn render_ref_label(ref_name: &str, t: &ThemeColors, cx: &App) -> AnyElement
         .into_any_element()
 }
 
-/// Render a single commit graph row (either a commit entry or a connector line).
-///
-/// `on_commit_click` is called with `(commit_hash, commit_message, commit_index)`
-/// when the user clicks a commit row.
-pub fn render_graph_row(
-    row: &GraphRow,
+/// Render a single commit row. The rails canvas lives *inside* the row
+/// container; the row's `.hover()` background tint paints behind it.
+pub(super) fn render_lane_row(
+    row: &LaneRow,
     index: usize,
-    max_graph_len: usize,
-    all_commits: &[CommitLogEntry],
+    max_col: usize,
+    palette: &BTreeMap<LaneId, usize>,
     on_commit_click: Option<Arc<dyn Fn(&str, &str, usize, &mut Window, &mut App)>>,
     t: &ThemeColors,
     cx: &App,
 ) -> AnyElement {
-    let graph_width = max_graph_len as f32 * GRAPH_CELL_W;
+    let row_h = COMMIT_ROW_H;
+    let graph_width = (max_col + 1) as f32 * GRAPH_CELL_W;
 
-    match row {
-        GraphRow::Commit(entry) => {
-            let row_el = h_flex()
-                .id(ElementId::Name(format!("graph-row-{}", index).into()))
-                .pl(px(4.0))
-                .pr(px(12.0))
-                .h(px(COMMIT_ROW_H))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)))
+    let rails = row.rails.clone();
+    let palette_for_canvas = palette.clone();
+    let theme = *t;
+
+    let rails_canvas = canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            paint_rails(window, ox, oy, row_h, &rails, &palette_for_canvas, &theme);
+        },
+    )
+    .absolute()
+    .left(px(GRAPH_PAD_LEFT))
+    .top(px(0.0))
+    .w(px(graph_width))
+    .h(px(row_h));
+
+    let entry = &row.entry;
+    let (dot_col, dot_lane) = row.dot;
+    let dot_color = lane_color(dot_lane, palette, t);
+    let dot_x = GRAPH_PAD_LEFT + dot_col as f32 * GRAPH_CELL_W + (GRAPH_CELL_W - DOT_SIZE) / 2.0;
+    let dot_y = (row_h - DOT_SIZE) / 2.0;
+
+    let row_el = h_flex()
+        .id(ElementId::Name(format!("graph-row-{}", index).into()))
+        .relative()
+        .pr(px(12.0))
+        .h(px(row_h))
+        .cursor_pointer()
+        // Hover tint — painted behind children (rails/dot/text stay visible).
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .child(rails_canvas)
+        .child(
+            div()
+                .absolute()
+                .left(px(dot_x))
+                .top(px(dot_y))
+                .w(px(DOT_SIZE))
+                .h(px(DOT_SIZE))
+                .rounded(px(DOT_SIZE / 2.0))
+                .bg(rgb(dot_color)),
+        )
+        // Spacer reserving the graph column so text starts past the rails.
+        .child(
+            div()
+                .flex_shrink_0()
+                .w(px(GRAPH_PAD_LEFT + graph_width))
+                .h(px(row_h)),
+        )
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .h(px(row_h))
+                .items_center()
+                .gap(px(6.0))
                 .child(
-                    render_graph_column(&entry.graph, max_graph_len, COMMIT_ROW_H, t)
-                        .w(px(graph_width))
-                        .h(px(COMMIT_ROW_H)),
-                )
-                .child(
-                    h_flex()
-                        .flex_1()
+                    div()
+                        .text_size(ui_text_md(cx))
+                        .text_color(rgb(t.text_primary))
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .flex_shrink()
                         .min_w_0()
-                        .h(px(COMMIT_ROW_H))
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(
-                            div()
-                                .text_size(ui_text_md(cx))
-                                .text_color(rgb(t.text_primary))
-                                .text_ellipsis()
-                                .overflow_hidden()
-                                .flex_shrink()
-                                .min_w_0()
-                                .child(entry.message.clone()),
-                        )
-                        .children(entry.refs.iter().map(|r| render_ref_label(r, t, cx)))
-                        .child(
-                            div()
-                                .text_size(ui_text_ms(cx))
-                                .text_color(rgb(t.text_muted))
-                                .flex_shrink_0()
-                                .child(entry.author.clone()),
-                        ),
-                );
+                        .child(entry.message.clone()),
+                )
+                .children(entry.refs.iter().map(|r| render_ref_label(r, t, cx)))
+                .child(
+                    div()
+                        .text_size(ui_text_ms(cx))
+                        .text_color(rgb(t.text_muted))
+                        .flex_shrink_0()
+                        .child(entry.author.clone()),
+                ),
+        );
 
-            if let Some(cb) = on_commit_click {
-                let hash = entry.hash.clone();
-                let msg = entry.message.clone();
-                let commit_idx = all_commits
-                    .iter()
-                    .position(|c| c.hash == entry.hash)
-                    .unwrap_or(0);
-                row_el
-                    .on_click(move |_, window, cx| {
-                        cb(&hash, &msg, commit_idx, window, cx);
-                    })
-                    .into_any_element()
-            } else {
-                row_el.cursor_default().into_any_element()
-            }
-        }
-        GraphRow::Connector(graph) => div()
-            .pl(px(4.0))
-            .h(px(CONNECTOR_ROW_H))
-            .child(
-                render_graph_column(graph, max_graph_len, CONNECTOR_ROW_H, t)
-                    .w(px(graph_width))
-                    .h(px(CONNECTOR_ROW_H)),
-            )
-            .into_any_element(),
+    if let Some(cb) = on_commit_click {
+        let hash = entry.hash.clone();
+        let msg = entry.message.clone();
+        // Layout rows are 1:1 with the commit list, so the row index is the
+        // commit index.
+        let commit_idx = index;
+        row_el
+            .on_click(move |_, window, cx| {
+                cb(&hash, &msg, commit_idx, window, cx);
+            })
+            .into_any_element()
+    } else {
+        row_el.cursor_default().into_any_element()
     }
 }

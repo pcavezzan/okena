@@ -4,7 +4,7 @@
 //! Extracted from `ProjectColumn` to keep that view thin. Implementation
 //! is split across the `git_header/` submodules — one per concern.
 
-use okena_git::{BranchList, FileDiffSummary, GraphRow};
+use okena_git::{BranchList, CommitLogEntry, FileDiffSummary};
 use okena_ui::simple_input::SimpleInputState;
 use okena_workspace::request_broker::RequestBroker;
 use okena_workspace::state::Workspace;
@@ -74,7 +74,7 @@ pub struct GitHeader {
 
     // ── Commit log state ────────────────────────────────────────────
     commit_log_visible: bool,
-    commit_log_entries: Vec<GraphRow>,
+    commit_log_entries: Vec<CommitLogEntry>,
     commit_log_loading: bool,
     commit_log_bounds: Bounds<Pixels>,
     commit_log_count: usize,

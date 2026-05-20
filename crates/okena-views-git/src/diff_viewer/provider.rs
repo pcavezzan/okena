@@ -1,6 +1,6 @@
 //! GitProvider trait and implementations for local and remote git operations.
 
-use okena_git::{BranchList, DiffMode, DiffResult, FileDiffSummary, GraphRow};
+use okena_git::{BranchList, CommitLogEntry, DiffMode, DiffResult, FileDiffSummary};
 
 /// Provides git data from either local git commands or a remote server.
 pub trait GitProvider: Send + Sync + 'static {
@@ -14,7 +14,7 @@ pub trait GitProvider: Send + Sync + 'static {
     fn get_diff(&self, mode: DiffMode, ignore_whitespace: bool) -> Result<DiffResult, String>;
     fn get_file_contents(&self, file_path: &str, mode: DiffMode) -> (Option<String>, Option<String>);
     fn get_diff_file_summary(&self) -> Vec<FileDiffSummary>;
-    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<GraphRow>;
+    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<CommitLogEntry>;
     fn list_branches(&self) -> Vec<String>;
     /// List branches split into local/remote with the current branch name.
     /// Default implementation falls back to [`list_branches`] and classifies
@@ -82,8 +82,8 @@ impl GitProvider for LocalGitProvider {
         okena_git::get_diff_file_summary(std::path::Path::new(&self.path))
     }
 
-    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<GraphRow> {
-        okena_git::get_commit_graph(std::path::Path::new(&self.path), count, branch)
+    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<CommitLogEntry> {
+        okena_git::fetch_commit_log(std::path::Path::new(&self.path), count, branch)
     }
 
     fn list_branches(&self) -> Vec<String> {
@@ -217,7 +217,7 @@ impl GitProvider for RemoteGitProvider {
         }
     }
 
-    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<GraphRow> {
+    fn get_commit_graph(&self, count: usize, branch: Option<&str>) -> Vec<CommitLogEntry> {
         let action = okena_core::api::ActionRequest::GitCommitGraph {
             project_id: self.project_id.clone(),
             count,
