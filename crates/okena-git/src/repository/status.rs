@@ -2,9 +2,6 @@
 
 use std::path::Path;
 
-use okena_core::process::{command, safe_output};
-
-use super::path_str;
 use crate::GitStatus;
 
 /// Three-state result of a fresh git status fetch.
@@ -226,43 +223,42 @@ fn is_binary(bytes: &[u8]) -> bool {
 /// Count commits the local branch is ahead of / behind its upstream.
 /// Returns `None` if HEAD is detached or no upstream is configured.
 ///
-/// Short-circuits via gix when no upstream is configured for the current
-/// branch, so the common "branch without remote tracking" case avoids the
-/// `git rev-list` subprocess entirely.
+/// Fully in-process via gix — no `git rev-list` subprocess. Mirrors
+/// `git rev-list --left-right --count <upstream>...HEAD` by counting each side
+/// of the symmetric difference with two hidden-tip rev-walks (see also
+/// [`count_unpushed_commits`]).
 pub fn count_ahead_behind(path: &Path) -> Option<(usize, usize)> {
     let repo = crate::gix_helpers::open(path)?;
     let branch = super::head_branch_short(&repo)?;
 
-    // Cheap upstream check via gix — most branches without an upstream
-    // hit this fast path and skip the spawn.
-    let has_upstream = repo
-        .find_reference(&format!("refs/heads/{}", branch))
-        .ok()
-        .and_then(|r| {
-            let head_ref: gix::refs::FullName = r.name().into();
-            repo.branch_remote_tracking_ref_name(head_ref.as_ref(), gix::remote::Direction::Fetch)
-                .and_then(|res| res.ok())
-        })
-        .is_some();
-    if !has_upstream {
-        return None;
-    }
+    // Resolve the upstream tracking ref via gix; `None` (skip) for branches
+    // without one — the common local-only branch case.
+    let head_ref = repo.find_reference(&format!("refs/heads/{}", branch)).ok()?;
+    let head_full: gix::refs::FullName = head_ref.name().into();
+    let upstream_name = repo
+        .branch_remote_tracking_ref_name(head_full.as_ref(), gix::remote::Direction::Fetch)?
+        .ok()?;
 
-    // `git rev-list --left-right --count <upstream>...HEAD` prints
-    // "<behind>\t<ahead>".
-    let revspec = format!("{0}@{{upstream}}...{0}", branch);
-    let p = path_str(path).ok()?;
-    let output =
-        safe_output(command("git").args(["-C", p, "rev-list", "--left-right", "--count", &revspec]))
-            .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    // Resolve both tips to commit ids.
+    let upstream_id = repo.rev_parse_single(upstream_name.as_bstr()).ok()?.detach();
+    let head_id = repo.head_id().ok()?.detach();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut parts = stdout.split_whitespace();
-    let behind: usize = parts.next()?.parse().ok()?;
-    let ahead: usize = parts.next()?.parse().ok()?;
+    // ahead = commits reachable from HEAD but not upstream; behind = the reverse.
+    let ahead = repo
+        .rev_walk([head_id])
+        .with_hidden([upstream_id])
+        .all()
+        .ok()?
+        .filter_map(Result::ok)
+        .count();
+    let behind = repo
+        .rev_walk([upstream_id])
+        .with_hidden([head_id])
+        .all()
+        .ok()?
+        .filter_map(Result::ok)
+        .count();
+
     Some((ahead, behind))
 }
 
