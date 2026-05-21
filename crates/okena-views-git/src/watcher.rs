@@ -3,6 +3,7 @@ use okena_workspace::state::Workspace;
 use gpui::prelude::*;
 use gpui::*;
 use okena_core::api::ApiGitStatus;
+use okena_core::process::{with_lane, Lane};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -75,7 +76,9 @@ impl GitStatusWatcher {
             });
 
             let futures = paths.into_iter().map(|path| {
-                smol::unblock(move || git::warm_branch_cache(Path::new(&path)))
+                smol::unblock(move || {
+                    with_lane(Lane::Poll, || git::warm_branch_cache(Path::new(&path)))
+                })
             });
             futures::future::join_all(futures).await;
         }).detach();
@@ -102,8 +105,10 @@ impl GitStatusWatcher {
         let Some(path) = path else { return };
 
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            let new_status =
-                smol::unblock(move || git::refresh_git_status(Path::new(&path))).await;
+            let new_status = smol::unblock(move || {
+                with_lane(Lane::Poll, || git::refresh_git_status(Path::new(&path)))
+            })
+            .await;
 
             let _ = this.update(cx, |this, cx| {
                 let mut new_status = new_status;
@@ -203,7 +208,7 @@ impl GitStatusWatcher {
                     let path = path.clone();
                     async move {
                         let status = smol::unblock(move || {
-                            git::refresh_git_status(Path::new(&path))
+                            with_lane(Lane::Poll, || git::refresh_git_status(Path::new(&path)))
                         }).await;
                         (id, status)
                     }
@@ -219,7 +224,7 @@ impl GitStatusWatcher {
                         let path = path.clone();
                         async move {
                             let pr_info = smol::unblock(move || {
-                                git::repository::get_pr_info(Path::new(&path))
+                                with_lane(Lane::Poll, || git::repository::get_pr_info(Path::new(&path)))
                             }).await;
                             (id, pr_info)
                         }
@@ -247,7 +252,7 @@ impl GitStatusWatcher {
                             let has_pr = pr_infos_snapshot.get(&id).map(|p| p.is_some()).unwrap_or(false);
                             async move {
                                 let checks = smol::unblock(move || {
-                                    git::repository::get_ci_checks(Path::new(&path), has_pr)
+                                    with_lane(Lane::Poll, || git::repository::get_ci_checks(Path::new(&path), has_pr))
                                 }).await;
                                 (id, checks)
                             }

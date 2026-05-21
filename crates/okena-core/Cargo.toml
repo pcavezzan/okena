@@ -8,6 +8,8 @@ license = "MIT"
 default = []
 client = ["dep:tokio", "dep:reqwest", "dep:tokio-tungstenite", "dep:async-channel", "dep:futures"]
 blocking-http = ["dep:reqwest", "reqwest/blocking"]
+# Exposes `process::testing` (command bus mock) to downstream crates' tests.
+test-support = []
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

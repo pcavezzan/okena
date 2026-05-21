@@ -1,15 +1,12 @@
-/// Create a [`std::process::Command`] that does **not** flash a console
-/// window on Windows.
+/// Create a [`std::process::Command`] that does **not** flash a console window
+/// on Windows. Delegates to the shared helper in `okena-core`.
+///
+/// Note: the updater spawns *detached, long-lived* processes (the replacement
+/// binary, `tar`/`unzip`) directly via `.spawn()`, so it deliberately does not
+/// route through the command bus — these outlive the bus and must not hold a
+/// worker permit.
 pub fn command(program: &str) -> std::process::Command {
-    #![allow(unused_mut)]
-    let mut cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
+    okena_core::process::command(program)
 }
 
 /// Get the updates directory for the active profile.

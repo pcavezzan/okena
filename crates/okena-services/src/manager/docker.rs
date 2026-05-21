@@ -234,7 +234,9 @@ impl ServiceManager {
                 let path_clone = path.clone();
                 let file_clone = file.clone();
                 let result = smol::unblock(move || {
-                    docker_compose::poll_status(&path_clone, &file_clone)
+                    okena_core::process::with_lane(okena_core::process::Lane::Poll, || {
+                        docker_compose::poll_status(&path_clone, &file_clone)
+                    })
                 })
                 .await;
 

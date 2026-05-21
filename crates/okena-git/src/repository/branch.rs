@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use okena_core::process::command;
+use okena_core::process::{command, safe_output};
 
 use super::{head_branch_short, path_str, require_success};
 use crate::error::{GitError, GitResult};
@@ -60,9 +60,7 @@ pub fn rebase_onto(worktree_path: &Path, target_branch: &str) -> GitResult<()> {
     crate::validate_git_ref(target_branch)?;
     let wt_str = path_str(worktree_path)?;
 
-    let output = command("git")
-        .args(["-C", wt_str, "rebase", target_branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", wt_str, "rebase", target_branch]))?;
 
     if output.status.success() {
         Ok(())
@@ -70,9 +68,7 @@ pub fn rebase_onto(worktree_path: &Path, target_branch: &str) -> GitResult<()> {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
         // Abort the failed rebase
-        let _ = command("git")
-            .args(["-C", wt_str, "rebase", "--abort"])
-            .output();
+        let _ = safe_output(command("git").args(["-C", wt_str, "rebase", "--abort"]));
 
         Err(GitError::GitExitError {
             status: output.status.code().unwrap_or(-1),
@@ -84,9 +80,7 @@ pub fn rebase_onto(worktree_path: &Path, target_branch: &str) -> GitResult<()> {
 /// Stash uncommitted changes.
 pub fn stash_changes(path: &Path) -> GitResult<()> {
     let p = path_str(path)?;
-    let output = command("git")
-        .args(["-C", p, "stash"])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "stash"]))?;
     require_success(output)
 }
 
@@ -94,18 +88,14 @@ pub fn stash_changes(path: &Path) -> GitResult<()> {
 /// Used for recovery when rebase/merge fails after stash.
 pub fn stash_pop(path: &Path) -> GitResult<()> {
     let p = path_str(path)?;
-    let output = command("git")
-        .args(["-C", p, "stash", "pop"])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "stash", "pop"]))?;
     require_success(output)
 }
 
 /// Stage a file (git add -- <file>).
 pub fn stage_file(repo_path: &Path, file_path: &str) -> GitResult<()> {
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "add", "--", file_path])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "add", "--", file_path]))?;
     require_success(output)
 }
 
@@ -113,9 +103,7 @@ pub fn stage_file(repo_path: &Path, file_path: &str) -> GitResult<()> {
 /// Works for both modified and newly-added files.
 pub fn unstage_file(repo_path: &Path, file_path: &str) -> GitResult<()> {
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "restore", "--staged", "--", file_path])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "restore", "--staged", "--", file_path]))?;
     require_success(output)
 }
 
@@ -123,18 +111,14 @@ pub fn unstage_file(repo_path: &Path, file_path: &str) -> GitResult<()> {
 /// Restores the file to its HEAD state.
 pub fn discard_file_changes(repo_path: &Path, file_path: &str) -> GitResult<()> {
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "checkout", "HEAD", "--", file_path])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "checkout", "HEAD", "--", file_path]))?;
     require_success(output)
 }
 
 /// Fetch from all remotes.
 pub fn fetch_all(path: &Path) -> GitResult<()> {
     let p = path_str(path)?;
-    let output = command("git")
-        .args(["-C", p, "fetch", "--all"])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "fetch", "--all"]))?;
     require_success(output)
 }
 
@@ -150,9 +134,7 @@ pub fn merge_branch(repo_path: &Path, branch: &str, no_ff: bool) -> GitResult<()
     }
     args.push(branch);
 
-    let output = command("git")
-        .args(&args)
-        .output()?;
+    let output = safe_output(command("git").args(&args))?;
     require_success(output)
 }
 
@@ -160,9 +142,7 @@ pub fn merge_branch(repo_path: &Path, branch: &str, no_ff: bool) -> GitResult<()
 pub fn delete_local_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
     crate::validate_git_ref(branch)?;
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "branch", "-d", "--", branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "branch", "-d", "--", branch]))?;
     require_success(output)
 }
 
@@ -170,9 +150,7 @@ pub fn delete_local_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
 pub fn delete_remote_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
     crate::validate_git_ref(branch)?;
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "push", "origin", "--delete", "--", branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "push", "origin", "--delete", "--", branch]))?;
     require_success(output)
 }
 
@@ -180,9 +158,7 @@ pub fn delete_remote_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
 pub fn push_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
     crate::validate_git_ref(branch)?;
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "push", "origin", "--", branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "push", "origin", "--", branch]))?;
     require_success(output)
 }
 
@@ -258,9 +234,7 @@ pub fn list_branches_classified(path: &Path) -> BranchList {
 pub fn checkout_local_branch(repo_path: &Path, branch: &str) -> GitResult<()> {
     crate::validate_git_ref(branch)?;
     let p = path_str(repo_path)?;
-    let output = command("git")
-        .args(["-C", p, "checkout", branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "checkout", branch]))?;
     require_success(output)
 }
 
@@ -281,9 +255,7 @@ pub fn checkout_remote_branch(repo_path: &Path, remote_branch: &str) -> GitResul
     // `git checkout --track <remote>/<branch>` creates a local branch and
     // sets the upstream to the remote ref in one shot. If a local branch
     // with that name already exists, fall back to plain checkout.
-    let output = command("git")
-        .args(["-C", p, "checkout", "--track", remote_branch])
-        .output()?;
+    let output = safe_output(command("git").args(["-C", p, "checkout", "--track", remote_branch]))?;
     if output.status.success() {
         return Ok(());
     }
@@ -308,7 +280,7 @@ pub fn create_and_checkout_branch(
         args.push(sp);
     }
 
-    let output = command("git").args(&args).output()?;
+    let output = safe_output(command("git").args(&args))?;
     require_success(output)
 }
 

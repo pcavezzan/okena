@@ -308,6 +308,10 @@ fn main() {
     // internal crate version.
     okena_terminal::terminal::set_app_version(env!("CARGO_PKG_VERSION"));
 
+    // Give PTYs and sockets FD headroom (macOS' 256 soft default is stingy for
+    // a multiplexer). The command bus separately caps concurrent subprocesses.
+    okena_core::process::raise_fd_limit();
+
     // Parse --profile <id> (or --profile=<id>)
     let profile_flag: Option<String> = args
         .iter()

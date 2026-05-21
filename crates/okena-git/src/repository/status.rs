@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use okena_core::process::command;
+use okena_core::process::{command, safe_output};
 
 use super::path_str;
 use crate::GitStatus;
@@ -252,10 +252,9 @@ pub fn count_ahead_behind(path: &Path) -> Option<(usize, usize)> {
     // "<behind>\t<ahead>".
     let revspec = format!("{0}@{{upstream}}...{0}", branch);
     let p = path_str(path).ok()?;
-    let output = command("git")
-        .args(["-C", p, "rev-list", "--left-right", "--count", &revspec])
-        .output()
-        .ok()?;
+    let output =
+        safe_output(command("git").args(["-C", p, "rev-list", "--left-right", "--count", &revspec]))
+            .ok()?;
     if !output.status.success() {
         return None;
     }

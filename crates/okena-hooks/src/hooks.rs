@@ -415,13 +415,15 @@ fn run_hook(
     std::thread::spawn(move || {
         let start = Instant::now();
 
-        let mut cmd = build_headless_command(&command, &env_vars);
+        let cmd = build_headless_command(&command, &env_vars);
+        // Long lane: a hook can run for minutes, so it must not contend for the
+        // bus permits the git/services pollers need.
+        let spec = okena_core::process::CommandSpec::from_command(&cmd)
+            .lane(okena_core::process::Lane::Long)
+            .label("hook")
+            .timeout(std::time::Duration::from_secs(300));
 
-        match cmd
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .output()
-        {
+        match okena_core::process::run(spec) {
             Ok(output) => {
                 let duration = start.elapsed();
                 if output.status.success() {
@@ -523,10 +525,12 @@ fn run_hook_sync(
     let exec_id = monitor.map(|m| m.record_start(hook_type, command, project_name, None));
     let start = Instant::now();
 
-    let output = build_headless_command(command, &env_vars)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output()
+    let cmd = build_headless_command(command, &env_vars);
+    let spec = okena_core::process::CommandSpec::from_command(&cmd)
+        .lane(okena_core::process::Lane::Long)
+        .label("hook")
+        .timeout(std::time::Duration::from_secs(300));
+    let output = okena_core::process::run(spec)
         .map_err(|e| {
             let msg = format!("Failed to execute hook '{}': {}", command, e);
             if let (Some(monitor), Some(id)) = (monitor, exec_id) {
