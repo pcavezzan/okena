@@ -10,6 +10,7 @@ mod cli;
 mod elements;
 mod git;
 mod keybindings;
+mod logging;
 mod process;
 mod remote;
 mod remote_client;
@@ -397,7 +398,9 @@ fn main() {
     if let Some(target) = log_target {
         builder.target(target);
     }
-    builder.init();
+    // Wrap the env_logger sink so logs also feed the in-app log console's
+    // in-memory ring + runtime-reloadable capture filter (see crate::logging).
+    logging::init(builder.build());
 
     // Log panics to okena.log (otherwise they only go to stderr which is lost)
     let default_hook = std::panic::take_hook();

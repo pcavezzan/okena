@@ -65,6 +65,11 @@ uuid = { version = "1.10", features = ["v4"] }
 dirs = "5.0"
 log = "0.4"
 env_logger = "0.11"
+# Standalone RUST_LOG-syntax filter (the same crate env_logger 0.11 uses) for
+# the runtime-reloadable capture filter behind the in-app log console.
+env_filter = "0.1"
+# Lock-free swap of the capture filter at runtime (no logging-path lock).
+arc-swap = "1"
 anyhow = "1.0"
 thiserror = "2.0"
 regex = "1.10"

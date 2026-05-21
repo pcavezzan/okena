@@ -8,7 +8,7 @@ use super::{
     JumpToNextPrompt, JumpToPreviousPrompt,
     MinimizeTerminal, NewProject, NewWindow, OpenSettingsFile, Paste, Quit, ResetZoom, ScrollDown, ScrollUp,
     Search, SearchNext, SearchPrev, SendEscape, ShowCommandPalette, ShowDiffViewer,
-    ShowContentSearch, ShowFileSearch, ShowHookLog, ShowKeybindings, ShowProjectSwitcher, ShowSessionManager,
+    ShowContentSearch, ShowFileSearch, ShowHookLog, ShowLogConsole, ShowKeybindings, ShowProjectSwitcher, ShowSessionManager,
     ShowSettings, ShowThemeSelector, SplitHorizontal, SplitVertical, StartAllServices,
     StopAllServices, ToggleFullscreen, TogglePaneSwitcher, ToggleSidebar, ToggleSidebarAutoHide,
     ZoomIn, ZoomOut, EqualizeLayout, ShowBranchSwitcher, ShowProfileManager,
@@ -500,6 +500,16 @@ pub fn get_action_descriptions() -> HashMap<&'static str, ActionDescription> {
             description: "View hook execution history",
             category: "Global",
             factory: || Box::new(ShowHookLog),
+        },
+    );
+
+    map.insert(
+        "ShowLogConsole",
+        ActionDescription {
+            name: "Log Console",
+            description: "Live log viewer with runtime filter",
+            category: "Global",
+            factory: || Box::new(ShowLogConsole),
         },
     );
 

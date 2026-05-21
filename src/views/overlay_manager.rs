@@ -29,6 +29,7 @@ use crate::views::overlays::tab_context_menu::{TabContextMenu, TabContextMenuEve
 use crate::views::overlays::terminal_context_menu::{TerminalContextMenu, TerminalContextMenuEvent};
 use crate::views::overlays::close_worktree_dialog::{CloseWorktreeDialog, CloseWorktreeDialogEvent};
 use crate::views::overlays::hook_log::{HookLog, HookLogEvent};
+use crate::views::overlays::log_console::{LogConsole, LogConsoleEvent};
 use crate::views::overlays::rename_directory_dialog::{RenameDirectoryDialog, RenameDirectoryDialogEvent};
 use crate::views::overlays::worktree_dialog::{WorktreeDialog, WorktreeDialogEvent};
 use okena_views_sidebar::{WorktreeListPopover, WorktreeListPopoverEvent};
@@ -466,6 +467,11 @@ impl OverlayManager {
     /// Toggle hook log overlay.
     pub fn toggle_hook_log(&mut self, cx: &mut Context<Self>) {
         toggle_overlay!(self, cx, HookLog, HookLogEvent, HookLog::new);
+    }
+
+    /// Toggle the log console overlay (live in-app log viewer).
+    pub fn toggle_log_console(&mut self, cx: &mut Context<Self>) {
+        toggle_overlay!(self, cx, LogConsole, LogConsoleEvent, LogConsole::new);
     }
 
     /// Toggle pairing dialog overlay.

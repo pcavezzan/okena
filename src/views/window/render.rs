@@ -1,4 +1,4 @@
-use crate::keybindings::{ShowKeybindings, ShowSessionManager, ShowThemeSelector, ShowCommandPalette, ShowSettings, OpenSettingsFile, ShowFileSearch, ShowContentSearch, ShowProjectSwitcher, ShowDiffViewer, ShowHookLog, NewProject, NewWindow, CloseWindow, ToggleSidebar, ToggleSidebarAutoHide, TogglePaneSwitcher, CreateWorktree, CheckForUpdates, InstallUpdate, FocusSidebar, FocusActiveProject, ShowPairingDialog, StartAllServices, StopAllServices, ClearFocus, EqualizeLayout, ShowBranchSwitcher, ShowProfileManager};
+use crate::keybindings::{ShowKeybindings, ShowSessionManager, ShowThemeSelector, ShowCommandPalette, ShowSettings, OpenSettingsFile, ShowFileSearch, ShowContentSearch, ShowProjectSwitcher, ShowDiffViewer, ShowHookLog, ShowLogConsole, NewProject, NewWindow, CloseWindow, ToggleSidebar, ToggleSidebarAutoHide, TogglePaneSwitcher, CreateWorktree, CheckForUpdates, InstallUpdate, FocusSidebar, FocusActiveProject, ShowPairingDialog, StartAllServices, StopAllServices, ClearFocus, EqualizeLayout, ShowBranchSwitcher, ShowProfileManager};
 use crate::settings::{open_settings_file, settings_entity};
 use crate::theme::theme;
 use crate::views::layout::navigation::{get_pane_map, prune_pane_map};
@@ -712,6 +712,13 @@ impl Render for WindowView {
                 let overlay_manager = overlay_manager.clone();
                 move |_this, _: &ShowHookLog, _window, cx| {
                     overlay_manager.update(cx, |om, cx| om.toggle_hook_log(cx));
+                }
+            }))
+            // Handle show log console action
+            .on_action(cx.listener({
+                let overlay_manager = overlay_manager.clone();
+                move |_this, _: &ShowLogConsole, _window, cx| {
+                    overlay_manager.update(cx, |om, cx| om.toggle_log_console(cx));
                 }
             }))
             // Handle show profile manager action

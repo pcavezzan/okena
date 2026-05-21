@@ -26,6 +26,7 @@ pub mod file_search;
 pub mod file_viewer;
 pub mod hook_log;
 pub mod keybindings_help;
+pub mod log_console;
 pub mod project_switcher;
 pub mod session_manager;
 pub mod settings_panel;
