@@ -813,7 +813,9 @@ impl PtyManager {
         self.get_shell_pid(terminal_id).into_iter().collect()
     }
 
-    /// Find the dtach daemon PID via `lsof -t <socket>`, excluding the attach PID.
+    /// Find the dtach daemon PID holding the session socket, excluding the
+    /// attach PID. Uses the /proc-based socket scan (no `lsof` subprocess on
+    /// Linux — a per-poll `lsof -t` was ~1s each).
     #[cfg(unix)]
     fn get_dtach_service_pids(&self, terminal_id: &str) -> Vec<u32> {
         let session_name = self.session_backend.session_name(terminal_id);
@@ -822,18 +824,13 @@ impl PtyManager {
             _ => return self.get_shell_pid(terminal_id).into_iter().collect(),
         };
 
-        let output = match crate::process::safe_output(
-            crate::process::command("lsof").arg("-t").arg(&socket_path),
-        ) {
-            Ok(o) if o.status.success() => o,
-            _ => return self.get_shell_pid(terminal_id).into_iter().collect(),
-        };
-
+        let holders = find_pids_for_unix_sockets(std::slice::from_ref(&socket_path));
         let attach_pid = self.get_shell_pid(terminal_id);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let pids: Vec<u32> = stdout
-            .lines()
-            .filter_map(|line| line.trim().parse::<u32>().ok())
+        let pids: Vec<u32> = holders
+            .get(&socket_path)
+            .into_iter()
+            .flatten()
+            .copied()
             .filter(|pid| Some(*pid) != attach_pid)
             .collect();
 
@@ -1144,7 +1141,7 @@ fn wait_for_exit_code(pid: u32) -> Option<u32> {
 /// then scans `/proc/*/fd/` to find PIDs holding those inodes.
 /// On other Unix systems, falls back to a single `lsof` invocation.
 #[cfg(unix)]
-fn find_pids_for_unix_sockets(
+pub(crate) fn find_pids_for_unix_sockets(
     socket_paths: &[std::path::PathBuf],
 ) -> HashMap<std::path::PathBuf, Vec<u32>> {
     if socket_paths.is_empty() {

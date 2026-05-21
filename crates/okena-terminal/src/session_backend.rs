@@ -304,43 +304,40 @@ impl ResolvedBackend {
                     {
                         let my_pid = std::process::id() as i32;
                         // Discover the PIDs holding the dtach socket open. This is a
-                        // best-effort scan: the set is a point-in-time snapshot from
-                        // `lsof`, and there is an inherent TOCTOU window between reading
-                        // it here and signalling below. By the time we call `kill`, the
-                        // dtach process may have already exited and its PID been recycled
-                        // onto an unrelated process. We accept this risk because there is
-                        // no portable, race-free way to atomically "signal whoever holds
-                        // this socket"; the window is short and the dtach socket is
-                        // user-private (see get_dtach_socket_dir). Don't try to "fix" the
-                        // TOCTOU by adding more lsof round-trips — that only widens it.
-                        if let Ok(output) = crate::process::safe_output(
-                            crate::process::command("lsof").arg("-t").arg(&socket_path),
-                        )
-                            && let Ok(pid_str) = String::from_utf8(output.stdout) {
-                                for line in pid_str.lines() {
-                                    if let Ok(pid) = line.trim().parse::<i32>() {
-                                        if pid == my_pid {
-                                            log::debug!("Skipping own PID {} when killing dtach session {}", pid, session_name);
-                                            continue;
-                                        }
-                                        // SAFETY: `libc::kill` is a thin FFI wrapper over the
-                                        // `kill(2)` syscall. It takes two plain `i32` values
-                                        // (a pid and a signal number) by value, dereferences no
-                                        // pointers, and has no memory-safety preconditions, so
-                                        // the call itself cannot cause UB regardless of the
-                                        // argument values. The only hazard is *logical*, not a
-                                        // memory-safety one: per the TOCTOU note above, `pid`
-                                        // may have been recycled since the lsof read, so we
-                                        // could signal an unrelated process. We tolerate that as
-                                        // best-effort cleanup and intentionally ignore the
-                                        // return value (the process may already be gone).
-                                        unsafe {
-                                            libc::kill(pid, libc::SIGTERM);
-                                        }
-                                        log::debug!("Sent SIGTERM to dtach process {} for session {}", pid, session_name);
-                                    }
-                                }
+                        // best-effort, point-in-time snapshot (now via the /proc socket
+                        // scan instead of an `lsof -t` spawn), with an inherent TOCTOU
+                        // window between reading it here and signalling below. By the
+                        // time we call `kill`, the dtach process may have already exited
+                        // and its PID been recycled onto an unrelated process. We accept
+                        // this risk because there is no portable, race-free way to
+                        // atomically "signal whoever holds this socket"; the window is
+                        // short and the dtach socket is user-private (see
+                        // get_dtach_socket_dir).
+                        let holders = crate::pty_manager::find_pids_for_unix_sockets(
+                            std::slice::from_ref(&socket_path),
+                        );
+                        for &pid in holders.get(&socket_path).into_iter().flatten() {
+                            let pid = pid as i32;
+                            if pid == my_pid {
+                                log::debug!("Skipping own PID {} when killing dtach session {}", pid, session_name);
+                                continue;
                             }
+                            // SAFETY: `libc::kill` is a thin FFI wrapper over the
+                            // `kill(2)` syscall. It takes two plain `i32` values
+                            // (a pid and a signal number) by value, dereferences no
+                            // pointers, and has no memory-safety preconditions, so
+                            // the call itself cannot cause UB regardless of the
+                            // argument values. The only hazard is *logical*, not a
+                            // memory-safety one: per the TOCTOU note above, `pid`
+                            // may have been recycled since the scan, so we could
+                            // signal an unrelated process. We tolerate that as
+                            // best-effort cleanup and intentionally ignore the
+                            // return value (the process may already be gone).
+                            unsafe {
+                                libc::kill(pid, libc::SIGTERM);
+                            }
+                            log::debug!("Sent SIGTERM to dtach process {} for session {}", pid, session_name);
+                        }
                     }
                     let _ = std::fs::remove_file(&socket_path);
                     log::debug!("Removed dtach socket: {:?}", socket_path);
@@ -360,22 +357,21 @@ pub fn cleanup_stale_dtach_sockets() {
         Err(_) => return, // dir doesn't exist yet — nothing to clean
     };
 
+    let socket_paths: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sock"))
+        .collect();
+
+    // One /proc socket scan for every socket at once, instead of an `lsof -t`
+    // spawn (~1s each) per file.
+    let holders = crate::pty_manager::find_pids_for_unix_sockets(&socket_paths);
+
     let mut removed = 0;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("sock") {
-            continue;
-        }
-
-        // Check if any process still has this socket open
-        let has_listener = crate::process::safe_output(
-            crate::process::command("lsof").arg("-t").arg(&path),
-        )
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false);
-
+    for path in &socket_paths {
+        let has_listener = holders.get(path).map(|v| !v.is_empty()).unwrap_or(false);
         if !has_listener {
-            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path);
             removed += 1;
         }
     }
