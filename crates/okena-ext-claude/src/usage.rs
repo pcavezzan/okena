@@ -159,10 +159,11 @@ fn read_access_token(claude_dir: &Path) -> Option<String> {
     {
         let user = std::env::var("USER").ok()?;
         let service = keychain_service_name(claude_dir);
-        let output = std::process::Command::new("security")
-            .args(["find-generic-password", "-s", &service, "-a", &user, "-w"])
-            .output()
-            .ok()?;
+        let output = okena_core::process::safe_output(
+            okena_core::process::command("security")
+                .args(["find-generic-password", "-s", &service, "-a", &user, "-w"]),
+        )
+        .ok()?;
         if output.status.success() {
             let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
             return extract_token(&content);

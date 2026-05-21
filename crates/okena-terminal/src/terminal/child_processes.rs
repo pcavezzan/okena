@@ -25,13 +25,11 @@ pub fn has_child_processes(pid: u32) -> bool {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 pub fn has_child_processes(pid: u32) -> bool {
-    std::process::Command::new("pgrep")
-        .args(["-P", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    crate::process::safe_output(
+        crate::process::command("pgrep").args(["-P", &pid.to_string()]),
+    )
+    .map(|o| o.status.success())
+    .unwrap_or(false)
 }
 
 #[cfg(not(unix))]

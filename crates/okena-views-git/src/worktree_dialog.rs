@@ -243,10 +243,11 @@ impl WorktreeDialog {
         let project_path = self.project_path.clone();
         cx.spawn(async move |this, cx| {
             let result = smol::unblock(move || {
-                let output = command("gh")
-                    .args(["pr", "list", "--json", "number,title,headRefName", "--limit", "20"])
-                    .current_dir(&project_path)
-                    .output();
+                let output = okena_core::process::safe_output(
+                    command("gh")
+                        .args(["pr", "list", "--json", "number,title,headRefName", "--limit", "20"])
+                        .current_dir(&project_path),
+                );
 
                 match output {
                     Ok(output) if output.status.success() => {

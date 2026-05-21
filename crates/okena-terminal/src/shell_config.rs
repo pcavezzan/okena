@@ -304,9 +304,7 @@ pub fn available_shells() -> Vec<AvailableShell> {
 /// Check if PowerShell Core (pwsh.exe) is available
 #[cfg(windows)]
 fn is_pwsh_available() -> bool {
-    crate::process::command("pwsh.exe")
-        .arg("-Version")
-        .output()
+    crate::process::safe_output(crate::process::command("pwsh.exe").arg("-Version"))
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -314,10 +312,9 @@ fn is_pwsh_available() -> bool {
 /// Detect installed WSL distributions
 #[cfg(windows)]
 pub fn detect_wsl_distros() -> Vec<String> {
-    let output = match crate::process::command("wsl.exe")
-        .args(["-l", "-q"])
-        .output()
-    {
+    let output = match crate::process::safe_output(
+        crate::process::command("wsl.exe").args(["-l", "-q"]),
+    ) {
         Ok(o) if o.status.success() => o,
         _ => return Vec::new(),
     };

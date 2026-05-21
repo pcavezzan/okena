@@ -1020,14 +1020,14 @@ impl PtyManager {
         let output_path = std::env::temp_dir().join(format!("terminal-{}.txt", &terminal_id[..8.min(terminal_id.len())]));
 
         // Use tmux capture-pane to get the entire scrollback buffer
-        let result = std::process::Command::new("tmux")
-            .args([
+        let result = crate::process::safe_output(
+            crate::process::command("tmux").args([
                 "capture-pane",
                 "-t", &session_name,
                 "-p",      // output to stdout
                 "-S", "-", // start from beginning of scrollback
-            ])
-            .output();
+            ]),
+        );
 
         match result {
             Ok(output) if output.status.success() => {
@@ -1321,10 +1321,10 @@ fn first_proc_child(pid: u32) -> Option<u32> {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn first_proc_child(pid: u32) -> Option<u32> {
-    let output = std::process::Command::new("pgrep")
-        .args(["-P", &pid.to_string()])
-        .output()
-        .ok()?;
+    let output = crate::process::safe_output(
+        crate::process::command("pgrep").args(["-P", &pid.to_string()]),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }

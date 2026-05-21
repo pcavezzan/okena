@@ -114,9 +114,10 @@ fn is_process_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
         // On Windows, try tasklist to check if PID exists
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output()
+        okena_core::process::safe_output(
+            okena_core::process::command("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"]),
+        )
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
             .unwrap_or(false)
     }

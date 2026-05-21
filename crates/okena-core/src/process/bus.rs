@@ -447,8 +447,11 @@ fn worker_loop(queue: &LaneQueue) {
     }
 }
 
-/// How often the run loop wakes to check the deadline / cancellation flag.
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Completion-poll backoff: start tight so short commands (`pgrep`, `git
+/// rev-parse`) are detected within a couple ms even when called from a
+/// latency-sensitive UI handler, then back off so long commands don't spin.
+const POLL_MIN: Duration = Duration::from_millis(1);
+const POLL_MAX: Duration = Duration::from_millis(20);
 
 fn run_job(spec: &CommandSpec, ctl: &Arc<JobControl>) -> std::io::Result<Output> {
     // Cancelled before we even started.
@@ -514,6 +517,7 @@ fn spawn_and_collect(spec: &CommandSpec, ctl: &Arc<JobControl>) -> std::io::Resu
     }
 
     let deadline = spec.timeout.map(|t| Instant::now() + t);
+    let mut backoff = POLL_MIN;
 
     loop {
         // Check cancellation before reaping: a killed child exits, and we must
@@ -550,7 +554,8 @@ fn spawn_and_collect(spec: &CommandSpec, ctl: &Arc<JobControl>) -> std::io::Resu
             ));
         }
 
-        std::thread::sleep(POLL_INTERVAL);
+        std::thread::sleep(backoff);
+        backoff = (backoff * 2).min(POLL_MAX);
     }
 }
 

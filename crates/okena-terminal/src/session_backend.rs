@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
-use std::process::Command;
 #[cfg(windows)]
 use std::collections::HashMap;
 #[cfg(windows)]
@@ -274,27 +273,29 @@ impl ResolvedBackend {
             Self::None => {}
             Self::Tmux => {
                 #[cfg(target_os = "macos")]
-                let _ = Command::new("tmux")
-                    .args(["kill-session", "-t", session_name])
-                    .env("PATH", get_extended_path())
-                    .output();
+                let _ = crate::process::safe_output(
+                    crate::process::command("tmux")
+                        .args(["kill-session", "-t", session_name])
+                        .env("PATH", get_extended_path()),
+                );
 
                 #[cfg(all(unix, not(target_os = "macos")))]
-                let _ = Command::new("tmux")
-                    .args(["kill-session", "-t", session_name])
-                    .output();
+                let _ = crate::process::safe_output(
+                    crate::process::command("tmux").args(["kill-session", "-t", session_name]),
+                );
             }
             Self::Screen => {
                 #[cfg(target_os = "macos")]
-                let _ = Command::new("screen")
-                    .args(["-S", session_name, "-X", "quit"])
-                    .env("PATH", get_extended_path())
-                    .output();
+                let _ = crate::process::safe_output(
+                    crate::process::command("screen")
+                        .args(["-S", session_name, "-X", "quit"])
+                        .env("PATH", get_extended_path()),
+                );
 
                 #[cfg(all(unix, not(target_os = "macos")))]
-                let _ = Command::new("screen")
-                    .args(["-S", session_name, "-X", "quit"])
-                    .output();
+                let _ = crate::process::safe_output(
+                    crate::process::command("screen").args(["-S", session_name, "-X", "quit"]),
+                );
             }
             Self::Dtach => {
                 let socket_path = get_dtach_socket_path(session_name);
@@ -312,10 +313,9 @@ impl ResolvedBackend {
                         // this socket"; the window is short and the dtach socket is
                         // user-private (see get_dtach_socket_dir). Don't try to "fix" the
                         // TOCTOU by adding more lsof round-trips — that only widens it.
-                        if let Ok(output) = Command::new("lsof")
-                            .arg("-t")
-                            .arg(&socket_path)
-                            .output()
+                        if let Ok(output) = crate::process::safe_output(
+                            crate::process::command("lsof").arg("-t").arg(&socket_path),
+                        )
                             && let Ok(pid_str) = String::from_utf8(output.stdout) {
                                 for line in pid_str.lines() {
                                     if let Ok(pid) = line.trim().parse::<i32>() {
@@ -368,10 +368,9 @@ pub fn cleanup_stale_dtach_sockets() {
         }
 
         // Check if any process still has this socket open
-        let has_listener = Command::new("lsof")
-            .arg("-t")
-            .arg(&path)
-            .output()
+        let has_listener = crate::process::safe_output(
+            crate::process::command("lsof").arg("-t").arg(&path),
+        )
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
 
@@ -780,10 +779,11 @@ fn is_dtach_available() -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("dtach")
-            .arg("-v")
-            .env("PATH", get_extended_path())
-            .output()
+        crate::process::safe_output(
+            crate::process::command("dtach")
+                .arg("-v")
+                .env("PATH", get_extended_path()),
+        )
             // dtach -v exits with 0 and prints version
             .map(|o| o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty())
             .unwrap_or(false)
@@ -791,9 +791,7 @@ fn is_dtach_available() -> bool {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("dtach")
-            .arg("-v")
-            .output()
+        crate::process::safe_output(crate::process::command("dtach").arg("-v"))
             // dtach -v exits with 0 and prints version
             .map(|o| o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty())
             .unwrap_or(false)
@@ -810,19 +808,18 @@ fn is_tmux_available() -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("tmux")
-            .arg("-V")
-            .env("PATH", get_extended_path())
-            .output()
+        crate::process::safe_output(
+            crate::process::command("tmux")
+                .arg("-V")
+                .env("PATH", get_extended_path()),
+        )
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("tmux")
-            .arg("-V")
-            .output()
+        crate::process::safe_output(crate::process::command("tmux").arg("-V"))
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
@@ -838,19 +835,18 @@ fn is_screen_available() -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("screen")
-            .arg("-v")
-            .env("PATH", get_extended_path())
-            .output()
+        crate::process::safe_output(
+            crate::process::command("screen")
+                .arg("-v")
+                .env("PATH", get_extended_path()),
+        )
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("screen")
-            .arg("-v")
-            .output()
+        crate::process::safe_output(crate::process::command("screen").arg("-v"))
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
