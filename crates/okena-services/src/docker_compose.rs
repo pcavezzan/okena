@@ -200,26 +200,159 @@ struct Publisher {
     published_port: Option<u16>,
 }
 
-/// Poll status of all services in the compose project.
-pub fn poll_status(project_path: &str, compose_file: &str) -> crate::ServiceResult<Vec<DockerServiceStatus>> {
+/// How long a `docker ps -a` snapshot is reused before refreshing.
+const PS_SNAPSHOT_TTL: Duration = Duration::from_secs(4);
+
+/// Shared snapshot of *all* compose containers on the host, from a single
+/// `docker ps -a`. Per-project pollers used to each spawn `docker compose ps`
+/// every 5s; with N compose projects that was N spawns per cycle. They now
+/// share this one snapshot, so the host is queried at most once per TTL
+/// regardless of how many projects are polling.
+static PS_SNAPSHOT: Mutex<Option<(Instant, Vec<ContainerSnapshot>)>> = Mutex::new(None);
+
+/// One compose container distilled from `docker ps -a --format json`.
+#[derive(Clone)]
+struct ContainerSnapshot {
+    /// `com.docker.compose.project.working_dir` — the project directory, used
+    /// to match a container back to an okena project. (We avoid matching on
+    /// `config_files`: its value can contain commas, which collide with the
+    /// label-list separator in `docker ps`'s flattened `Labels` string.)
+    working_dir: Option<std::path::PathBuf>,
+    service: String,
+    state: String,
+    exit_code: Option<u32>,
+    ports: Vec<u16>,
+}
+
+/// Raw JSON shape from `docker ps -a --format json` (NDJSON).
+#[derive(Deserialize)]
+struct DockerPsAEntry {
+    #[serde(rename = "Labels")]
+    labels: Option<String>,
+    #[serde(rename = "State")]
+    state: Option<String>,
+    #[serde(rename = "Status")]
+    status: Option<String>,
+    #[serde(rename = "Ports")]
+    ports: Option<String>,
+}
+
+/// Value of `key` in docker's flattened `k=v,k=v` label string. Robust to
+/// commas inside *other* values (those fragments simply lack `=` for `key`).
+fn label_value<'a>(labels: &'a str, key: &str) -> Option<&'a str> {
+    labels
+        .split(',')
+        .find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v))
+}
+
+/// Parse the exit code out of a `docker ps` Status like "Exited (137) 2h ago".
+fn parse_exit_code(status: &str) -> Option<u32> {
+    let start = status.find("Exited (")? + "Exited (".len();
+    let rest = &status[start..];
+    rest[..rest.find(')')?].parse().ok()
+}
+
+/// Extract published host ports from a `docker ps` Ports string, e.g.
+/// "1025/tcp, 0.0.0.0:3006->8025/tcp, [::]:3006->8025/tcp" -> [3006].
+fn parse_published_ports(ports: &str) -> Vec<u16> {
+    let mut out: Vec<u16> = ports
+        .split(',')
+        .filter_map(|part| {
+            let host = &part[..part.find("->")?];
+            host[host.rfind(':')? + 1..].trim().parse::<u16>().ok()
+        })
+        .filter(|&p| p > 0)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Refresh the shared snapshot via a single `docker ps -a`.
+fn refresh_ps_snapshot() -> crate::ServiceResult<Vec<ContainerSnapshot>> {
     use crate::error::ServiceError;
 
     let mut cmd = process::command("docker");
-    cmd.args(["compose", "-f", compose_file, "ps", "--format", "json", "-a"])
-        .current_dir(project_path);
-
+    cmd.args(["ps", "-a", "--format", "json", "--no-trunc"]);
     let output = process::safe_output_with_timeout(&mut cmd, DOCKER_TIMEOUT)?;
-
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(ServiceError::CommandExitError {
-            context: "docker compose ps".to_string(),
+            context: "docker ps".to_string(),
             stderr,
         });
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_docker_ps_output(&stdout)
+    let mut containers = Vec::new();
+    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(entry) = serde_json::from_str::<DockerPsAEntry>(line) else {
+            continue;
+        };
+        let labels = entry.labels.unwrap_or_default();
+        // Only compose-managed containers carry a service label.
+        let Some(service) = label_value(&labels, "com.docker.compose.service") else {
+            continue;
+        };
+        let state = entry.state.unwrap_or_else(|| "unknown".to_string());
+        let exit_code = entry
+            .status
+            .as_deref()
+            .and_then(parse_exit_code)
+            .or(if state == "exited" { Some(0) } else { None });
+        containers.push(ContainerSnapshot {
+            working_dir: label_value(&labels, "com.docker.compose.project.working_dir")
+                .map(std::path::PathBuf::from),
+            service: service.to_string(),
+            state,
+            exit_code,
+            ports: entry.ports.as_deref().map(parse_published_ports).unwrap_or_default(),
+        });
+    }
+    Ok(containers)
+}
+
+/// Get the shared container snapshot, refreshing it if older than the TTL.
+fn ps_snapshot() -> crate::ServiceResult<Vec<ContainerSnapshot>> {
+    if let Ok(guard) = PS_SNAPSHOT.lock()
+        && let Some((ts, snap)) = guard.as_ref()
+        && ts.elapsed() < PS_SNAPSHOT_TTL
+    {
+        return Ok(snap.clone());
+    }
+    let fresh = refresh_ps_snapshot()?;
+    if let Ok(mut guard) = PS_SNAPSHOT.lock() {
+        *guard = Some((Instant::now(), fresh.clone()));
+    }
+    Ok(fresh)
+}
+
+/// Poll status of all services in the compose project.
+///
+/// Reads from the shared `docker ps -a` snapshot and filters to the containers
+/// whose compose project working-dir matches `project_path` — so no per-project
+/// `docker compose ps` spawn.
+pub fn poll_status(project_path: &str, _compose_file: &str) -> crate::ServiceResult<Vec<DockerServiceStatus>> {
+    let project_canon = std::path::Path::new(project_path)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(project_path));
+
+    let snapshot = ps_snapshot()?;
+    Ok(snapshot
+        .into_iter()
+        .filter(|c| {
+            c.working_dir.as_ref().is_some_and(|w| {
+                let wc = w.canonicalize().unwrap_or_else(|_| w.clone());
+                wc == project_canon
+            })
+        })
+        .map(|c| DockerServiceStatus {
+            name: c.service,
+            state: c.state,
+            exit_code: c.exit_code,
+            ports: c.ports,
+        })
+        .collect())
 }
 
 /// Parse the output of `docker compose ps --format json`.
@@ -407,3 +540,7 @@ mod tests {
         assert_eq!(result, vec!["db", "redis", "web"]);
     }
 }
+
+
+
+
