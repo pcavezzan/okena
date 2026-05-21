@@ -201,7 +201,7 @@ impl ServiceManager {
                     return;
                 }
 
-                cx.background_executor().timer(Duration::from_secs(3)).await;
+                cx.background_executor().timer(Duration::from_secs(5)).await;
             }
         })
         .detach();
