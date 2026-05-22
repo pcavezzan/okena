@@ -334,30 +334,27 @@ impl ClaudeUsage {
                         }
                     };
 
-                    let client = match reqwest::blocking::Client::builder()
-                        .timeout(Duration::from_secs(10))
-                        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-                        .build()
-                    {
-                        Ok(c) => c,
-                        Err(_) => return (None, None),
-                    };
-
-                    let response = client
-                        .get("https://api.anthropic.com/api/oauth/usage")
-                        .header("Authorization", format!("Bearer {}", token))
+                    let response = okena_core::http::send(
+                        okena_core::http::HttpRequest::get(
+                            "https://api.anthropic.com/api/oauth/usage",
+                        )
+                        .bearer(&token)
                         .header("anthropic-beta", "oauth-2025-04-20")
-                        .send();
+                        .timeout(Duration::from_secs(10))
+                        .label("claude.usage")
+                        // Safety floor: real cadence is 300s (≥30s on retry); a
+                        // 5s floor only ever catches a runaway re-spawn. One
+                        // request per tick, so it never clips a legit retry.
+                        .min_interval(Duration::from_secs(5)),
+                    );
 
                     match response {
                         Ok(resp) => {
                             let status = resp.status();
 
-                            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                            if status == 429 {
                                 let retry_secs = resp
-                                    .headers()
-                                    .get("retry-after")
-                                    .and_then(|v| v.to_str().ok())
+                                    .header("retry-after")
                                     .and_then(|v| v.parse::<u64>().ok())
                                     .unwrap_or(USAGE_INTERVAL.as_secs() * 2);
                                 let effective = Duration::from_secs(retry_secs)
@@ -369,13 +366,13 @@ impl ClaudeUsage {
                                 return (None, Some(Duration::from_secs(retry_secs)));
                             }
 
-                            let body = resp.text().unwrap_or_default();
+                            let body = resp.text();
                             log::info!(
                                 "[claude-usage] HTTP {} body={}",
                                 status,
                                 &body[..body.len().min(500)]
                             );
-                            if !status.is_success() {
+                            if !resp.is_success() {
                                 return (None, None);
                             }
                             let parsed: serde_json::Value =

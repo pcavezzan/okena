@@ -37,19 +37,14 @@ fn download_blocking(
 
     let dest = updates_dir.join(asset_name);
 
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(3600))
-        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let resp = client
-        .get(url)
-        .send()
-        .context("failed to start download")?
-        .error_for_status()
-        .context("server returned an error status")?;
+    let resp = okena_core::http::stream(
+        okena_core::http::HttpRequest::get(url)
+            .timeout(Duration::from_secs(3600))
+            .label("updater.download"),
+    )
+    .context("failed to start download")?
+    .error_for_status()
+    .context("server returned an error status")?;
 
     let total = resp.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
@@ -119,20 +114,15 @@ fn verify_checksum(file_path: &Path, asset_name: &str, checksum_url: &str) -> Re
 
     log::info!("Verifying checksum for {}", asset_name);
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("failed to build HTTP client for checksum")?;
-
-    let body = client
-        .get(checksum_url)
-        .send()
-        .context("failed to fetch checksum file")?
-        .error_for_status()
-        .context("checksum file request failed")?
-        .text()
-        .context("failed to read checksum file")?;
+    let body = okena_core::http::send(
+        okena_core::http::HttpRequest::get(checksum_url)
+            .timeout(Duration::from_secs(30))
+            .label("updater.checksum"),
+    )
+    .context("failed to fetch checksum file")?
+    .error_for_status()
+    .context("checksum file request failed")?
+    .text();
 
     let expected_hash = body
         .lines()

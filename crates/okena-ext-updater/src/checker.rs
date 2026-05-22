@@ -18,22 +18,21 @@ pub async fn check_for_update(app_version: String) -> Result<Option<ReleaseAsset
 }
 
 fn check_blocking(app_version: &str) -> Result<Option<ReleaseAsset>> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
+    let http_resp = okena_core::http::send(
+        okena_core::http::HttpRequest::get(
+            "https://api.github.com/repos/contember/okena/releases/latest",
+        )
         .user_agent(format!("okena/{}", app_version))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let http_resp = client
-        .get("https://api.github.com/repos/contember/okena/releases/latest")
-        .send()
-        .context("failed to fetch latest release")?;
+        .timeout(Duration::from_secs(15))
+        .label("updater.check"),
+    )
+    .context("failed to fetch latest release")?;
 
     let status = http_resp.status();
-    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+    if status == 403 || status == 429 {
         anyhow::bail!("GitHub API rate limit exceeded — try again later");
     }
-    if !status.is_success() {
+    if !http_resp.is_success() {
         anyhow::bail!("GitHub API returned status {}", status);
     }
 

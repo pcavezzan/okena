@@ -60,18 +60,19 @@ impl CodexStatus {
         let poll_task = cx.spawn(async move |this: WeakEntity<Self>, cx| {
             loop {
                 let result = smol::unblock(|| {
-                    let client = reqwest::blocking::Client::builder()
+                    let resp: serde_json::Value = okena_core::http::send(
+                        okena_core::http::HttpRequest::get(
+                            "https://status.openai.com/api/v2/summary.json",
+                        )
                         .timeout(Duration::from_secs(10))
-                        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-                        .build()
-                        .ok()?;
-
-                    let resp: serde_json::Value = client
-                        .get("https://status.openai.com/api/v2/summary.json")
-                        .send()
-                        .ok()?
-                        .json()
-                        .ok()?;
+                        .label("codex.status")
+                        // Safety floor: real cadence is 60s; 5s only ever
+                        // catches a runaway re-spawn.
+                        .min_interval(Duration::from_secs(5)),
+                    )
+                    .ok()?
+                    .json()
+                    .ok()?;
 
                     // Find the Codex component and its ID. OpenAI renamed the
                     // component from "Codex" to "Codex API" (2026), so match

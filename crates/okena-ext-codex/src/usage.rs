@@ -89,22 +89,21 @@ struct CodexAuth {
 
 /// Refresh the OAuth access token using the refresh token.
 fn refresh_access_token(auth: &CodexAuth) -> Option<String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .ok()?;
-
-    let resp: serde_json::Value = client
-        .post("https://auth.openai.com/oauth/token")
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(format!(
-            "grant_type=refresh_token&client_id={}&refresh_token={}",
-            CODEX_CLIENT_ID, auth.refresh_token
-        ))
-        .send()
-        .ok()?
-        .json()
-        .ok()?;
+    let resp: serde_json::Value = okena_core::http::send(
+        okena_core::http::HttpRequest::post("https://auth.openai.com/oauth/token")
+            .body(
+                "application/x-www-form-urlencoded",
+                format!(
+                    "grant_type=refresh_token&client_id={}&refresh_token={}",
+                    CODEX_CLIENT_ID, auth.refresh_token
+                ),
+            )
+            .timeout(Duration::from_secs(10))
+            .label("codex.token-refresh"),
+    )
+    .ok()?
+    .json()
+    .ok()?;
 
     let new_access = resp["access_token"].as_str()?;
     let new_refresh = resp["refresh_token"].as_str();
@@ -268,39 +267,37 @@ fn fetch_usage_from_local_sessions(auth: &CodexAuth) -> Option<UsageData> {
 }
 
 fn try_fetch_with_token(
-    client: &reqwest::blocking::Client,
     access_token: &str,
     account_id: &str,
-) -> Result<reqwest::blocking::Response, Option<u16>> {
-    let resp = client
-        .get("https://chatgpt.com/backend-api/codex/usage")
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("chatgpt-account-id", account_id)
-        .send()
-        .map_err(|_| None)?;
+) -> Result<okena_core::http::HttpResponse, Option<u16>> {
+    // No min_interval floor here: a single tick can legitimately issue two
+    // requests with this label (cached token → 401 → refresh → retry), and a
+    // floor would clip the retry. The outer poll cadence is 300s.
+    let resp = okena_core::http::send(
+        okena_core::http::HttpRequest::get("https://chatgpt.com/backend-api/codex/usage")
+            .bearer(access_token)
+            .header("chatgpt-account-id", account_id)
+            .timeout(Duration::from_secs(10))
+            .label("codex.usage"),
+    )
+    .map_err(|_| None)?;
 
-    if resp.status().is_success() {
+    if resp.is_success() {
         Ok(resp)
     } else {
-        Err(Some(resp.status().as_u16()))
+        Err(Some(resp.status()))
     }
 }
 
 fn fetch_usage() -> Option<UsageData> {
     let auth = read_codex_auth()?;
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .ok()?;
-
     // Try cached access token first, refresh on 401
-    let resp = match try_fetch_with_token(&client, &auth.access_token, &auth.account_id) {
+    let resp = match try_fetch_with_token(&auth.access_token, &auth.account_id) {
         Ok(resp) => resp,
         Err(Some(401)) => {
             let new_token = refresh_access_token(&auth)?;
-            match try_fetch_with_token(&client, &new_token, &auth.account_id) {
+            match try_fetch_with_token(&new_token, &auth.account_id) {
                 Ok(resp) => resp,
                 Err(status) => {
                     log::warn!("[codex-usage] API returned {:?} after token refresh", status);

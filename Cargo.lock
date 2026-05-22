@@ -5563,7 +5563,6 @@ dependencies = [
  "okena-extensions",
  "okena-ui",
  "parking_lot",
- "reqwest",
  "serde_json",
  "sha2",
  "smol",
@@ -5583,7 +5582,6 @@ dependencies = [
  "okena-extensions",
  "okena-ui",
  "parking_lot",
- "reqwest",
  "serde_json",
  "smol",
 ]
@@ -5601,7 +5599,6 @@ dependencies = [
  "okena-extensions",
  "okena-ui",
  "parking_lot",
- "reqwest",
  "semver",
  "serde_json",
  "sha2",

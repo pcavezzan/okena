@@ -60,18 +60,20 @@ impl ClaudeStatus {
         let poll_task = cx.spawn(async move |this: WeakEntity<Self>, cx| {
             loop {
                 let result = smol::unblock(|| {
-                    let client = reqwest::blocking::Client::builder()
+                    let resp: serde_json::Value = okena_core::http::send(
+                        okena_core::http::HttpRequest::get(
+                            "https://status.claude.com/api/v2/summary.json",
+                        )
                         .timeout(Duration::from_secs(10))
-                        .user_agent(format!("okena/{}", env!("CARGO_PKG_VERSION")))
-                        .build()
-                        .ok()?;
-
-                    let resp: serde_json::Value = client
-                        .get("https://status.claude.com/api/v2/summary.json")
-                        .send()
-                        .ok()?
-                        .json()
-                        .ok()?;
+                        .label("claude.status")
+                        // Safety floor: this poller's real cadence is 60s; a 5s
+                        // floor only ever catches a runaway re-spawn, never the
+                        // legit interval.
+                        .min_interval(Duration::from_secs(5)),
+                    )
+                    .ok()?
+                    .json()
+                    .ok()?;
 
                     // Find the Claude Code component and its ID
                     let components = resp["components"].as_array()?;
