@@ -12,6 +12,7 @@ use crate::theme::theme;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::{h_flex, v_flex};
+use gpui_component::scroll::ScrollableElement;
 use okena_core::theme::ThemeColors;
 use std::path::PathBuf;
 use okena_markdown::RenderedNode;
@@ -738,6 +739,39 @@ impl FileViewer {
     }
 }
 
+impl FileViewer {
+    /// Ensure the active tab has a `ListState` matching its markdown document,
+    /// returning a clone for the render to drive the virtualized preview.
+    ///
+    /// The state is rebuilt when the block count changes (a different document
+    /// or an external reload) and remeasured when the font size changes, so
+    /// cached item heights stay valid.
+    fn ensure_markdown_list_state(&mut self, _cx: &mut Context<Self>) -> Option<ListState> {
+        let font = self.file_font_size;
+        let tab = self.active_tab_mut();
+        let count = tab.markdown_doc.as_ref().map(|d| d.node_count())?;
+
+        let needs_new = match &tab.markdown_list_state {
+            None => true,
+            Some(_) => tab.markdown_list_nodes != count,
+        };
+
+        if needs_new {
+            tab.markdown_list_state =
+                Some(ListState::new(count, ListAlignment::Top, px(400.0)));
+            tab.markdown_list_nodes = count;
+            tab.markdown_list_font = font;
+        } else if tab.markdown_list_font != font {
+            if let Some(state) = &tab.markdown_list_state {
+                state.remeasure();
+            }
+            tab.markdown_list_font = font;
+        }
+
+        tab.markdown_list_state.clone()
+    }
+}
+
 impl Render for FileViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Schedule a background freshness check for externally modified files
@@ -799,19 +833,15 @@ impl Render for FileViewer {
             Vec::new()
         };
 
-        // Pre-render markdown preview with selection
-        let tab = self.active_tab();
-        let preview_nodes: Vec<RenderedNode> = if !has_error && is_preview_mode && is_markdown {
-            tab.markdown_doc
-                .as_ref()
-                .map(|doc| {
-                    let selection = tab.markdown_selection.normalized_non_empty();
-                    doc.render_nodes_with_offsets(&t, cx, selection)
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        // Markdown preview uses a virtualized list (built below) so only the
+        // visible blocks are rendered per frame. Ensure the per-tab ListState
+        // exists and matches the current document and font size.
+        let markdown_list_state: Option<ListState> =
+            if !has_error && is_preview_mode && is_markdown {
+                self.ensure_markdown_list_state(cx)
+            } else {
+                None
+            };
 
         // Render tab bar
         let tab_bar: Option<AnyElement> = if show_tabs {
@@ -1242,11 +1272,27 @@ impl Render for FileViewer {
                                 )
                             })
                             .when(!tab_loading && !has_error && is_preview_mode, |d| {
-                                let mut content_children: Vec<AnyElement> = Vec::new();
-                                let mut node_idx = 0usize;
-
-                                for rendered_node in preview_nodes {
-                                    match rendered_node {
+                                let Some(list_state) = markdown_list_state.clone() else {
+                                    return d;
+                                };
+                                let view = cx.entity().clone();
+                                let md_list = list(list_state.clone(), move |idx, _window, cx| {
+                                    view.update(cx, |this, cx| {
+                                        let t = theme(cx);
+                                        let node_idx = idx;
+                                        let selection = this
+                                            .active_tab()
+                                            .markdown_selection
+                                            .normalized_non_empty();
+                                        let Some(rendered_node) = this
+                                            .active_tab()
+                                            .markdown_doc
+                                            .as_ref()
+                                            .and_then(|doc| doc.render_node(idx, &t, cx, selection))
+                                        else {
+                                            return div().into_any_element();
+                                        };
+                                        let element = match rendered_node {
                                         RenderedNode::Simple {
                                             div: node_div,
                                             start_offset,
@@ -1254,8 +1300,7 @@ impl Render for FileViewer {
                                         } => {
                                             let node_end = end_offset.saturating_sub(1);
                                             let idx = node_idx;
-                                            content_children.push(
-                                                div()
+                                            div()
                                                     .id(ElementId::Name(
                                                         format!("md-node-{}", idx).into(),
                                                     ))
@@ -1329,9 +1374,7 @@ impl Render for FileViewer {
                                                         ),
                                                     )
                                                     .child(node_div)
-                                                    .into_any_element(),
-                                            );
-                                            node_idx += 1;
+                                                    .into_any_element()
                                         }
                                         RenderedNode::CodeBlock {
                                             language, lines, ..
@@ -1389,12 +1432,13 @@ impl Render for FileViewer {
                                                     .id(ElementId::Name(
                                                         format!("md-codeblock-{}", idx).into(),
                                                     ))
+                                                    .overflow_x_scroll()
                                                     .child(
                                                         div()
                                                             .p(px(12.0))
                                                             .font_family("monospace")
                                                             .text_size(ui_text(
-                                                                self.file_font_size,
+                                                                this.file_font_size,
                                                                 cx,
                                                             ))
                                                             .text_color(rgb(t.text_secondary))
@@ -1403,8 +1447,7 @@ impl Render for FileViewer {
                                                             .children(line_children),
                                                     );
 
-                                            content_children.push(code_block.into_any_element());
-                                            node_idx += 1;
+                                            code_block.into_any_element()
                                         }
                                         RenderedNode::Table { header, rows } => {
                                             let idx = node_idx;
@@ -1507,30 +1550,30 @@ impl Render for FileViewer {
                                                 .rounded(px(4.0))
                                                 .border_1()
                                                 .border_color(rgb(t.border))
-                                                .overflow_hidden()
+                                                .overflow_x_scroll()
                                                 .children(table_rows);
 
-                                            content_children.push(table.into_any_element());
-                                            node_idx += 1;
+                                            table.into_any_element()
                                         }
-                                    }
-                                }
-
-                                let content_div = v_flex()
-                                    .gap(px(12.0))
-                                    .p(px(16.0))
-                                    .max_w(px(900.0))
-                                    .children(content_children);
+                                        };
+                                        // Per-block wrapper carries the spacing
+                                        // and max width the old container provided.
+                                        div()
+                                            .w_full()
+                                            .max_w(px(900.0))
+                                            .pb(px(12.0))
+                                            .child(element)
+                                            .into_any_element()
+                                    })
+                                });
 
                                 d.child(
                                     div()
                                         .id("markdown-preview")
+                                        .relative()
                                         .flex_1()
-                                        .overflow_y_scroll()
-                                        .overflow_x_scroll()
-                                        .track_scroll(
-                                            &self.active_tab().markdown_scroll_handle,
-                                        )
+                                        .min_h_0()
+                                        .p(px(16.0))
                                         .bg(rgb(t.bg_secondary))
                                         .cursor(CursorStyle::IBeam)
                                         .on_mouse_up(
@@ -1544,7 +1587,8 @@ impl Render for FileViewer {
                                                 },
                                             ),
                                         )
-                                        .child(content_div),
+                                        .child(md_list.w_full().h_full())
+                                        .vertical_scrollbar(&list_state),
                                 )
                             })
                             // Footer

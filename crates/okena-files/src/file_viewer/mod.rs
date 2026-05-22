@@ -69,7 +69,14 @@ pub(super) struct FileViewerTab {
     pub is_markdown: bool,
     pub markdown_doc: Option<MarkdownDocument>,
     pub markdown_selection: MarkdownSelection,
-    pub markdown_scroll_handle: ScrollHandle,
+    /// Virtualized list state for the markdown preview. One list item per
+    /// top-level block, so only visible blocks are built per frame. Lazily
+    /// (re)created in render when the node count or font size changes.
+    pub markdown_list_state: Option<ListState>,
+    /// Node count `markdown_list_state` was built for (to detect doc reloads).
+    pub markdown_list_nodes: usize,
+    /// Font size the list heights were measured at (to trigger a remeasure).
+    pub markdown_list_font: f32,
     pub source_scroll_handle: UniformListScrollHandle,
     pub scrollbar_drag: Option<ScrollbarDrag>,
     /// Last known modification time of the file (for detecting external changes).
@@ -107,7 +114,9 @@ impl FileViewerTab {
             is_markdown: false,
             markdown_doc: None,
             markdown_selection: MarkdownSelection::default(),
-            markdown_scroll_handle: ScrollHandle::new(),
+            markdown_list_state: None,
+            markdown_list_nodes: 0,
+            markdown_list_font: 0.0,
             source_scroll_handle: UniformListScrollHandle::new(),
             scrollbar_drag: None,
             modified_at: None,
@@ -136,7 +145,9 @@ impl FileViewerTab {
             is_markdown,
             markdown_doc: None,
             markdown_selection: MarkdownSelection::default(),
-            markdown_scroll_handle: ScrollHandle::new(),
+            markdown_list_state: None,
+            markdown_list_nodes: 0,
+            markdown_list_font: 0.0,
             source_scroll_handle: UniformListScrollHandle::new(),
             scrollbar_drag: None,
             modified_at: None,
