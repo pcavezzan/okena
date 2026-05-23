@@ -65,6 +65,22 @@ impl Terminal {
         *self.last_output_time.lock() = Instant::now();
     }
 
+    /// Eagerly drain and parse any pending (enqueued) output on the GPUI thread.
+    ///
+    /// `with_content` parses pending bytes lazily, just before handing the grid
+    /// to the renderer. That is too late for sibling/ancestor views that read
+    /// derived state — the pane bell border (`TerminalPane::render`) and the
+    /// sidebar bell/idle indicators read `has_bell()` / `is_waiting_for_input()`
+    /// *before* the `TerminalContent` child drains. For local terminals the
+    /// equivalent state is set eagerly in `process_output`; remote terminals only
+    /// buffer via `enqueue_output`, so without an eager parse those indicators
+    /// render one frame stale and only appear once unrelated local input forces a
+    /// second repaint. The remote dirty loop calls this so the flags are current
+    /// when the frame is built. GPUI thread only.
+    pub fn process_pending_output(&self) {
+        self.drain_pending_output();
+    }
+
     /// Drain all pending output and feed it into the terminal emulator.
     ///
     /// Called automatically by `with_content` before rendering.

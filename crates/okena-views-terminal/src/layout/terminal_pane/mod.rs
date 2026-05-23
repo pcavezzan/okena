@@ -203,7 +203,16 @@ impl<D: ActionDispatch + Send + Sync> TerminalPane<D> {
             loop {
                 smol::Timer::after(interval).await;
                 let result = this.update(cx, |pane, cx| {
-                    if pane.terminal.as_ref().is_some_and(|t| t.take_dirty()) {
+                    if let Some(terminal) = pane.terminal.as_ref()
+                        && terminal.take_dirty() {
+                        // Parse the freshly-arrived bytes up front so derived
+                        // state (bell, waiting) is current before the frame is
+                        // built. Otherwise the lazy parse inside the content
+                        // child's `with_content` runs *after* the pane border
+                        // and sidebar read `has_bell()`, leaving those server-
+                        // driven indicators stale until local input forces a
+                        // second repaint (issue #128).
+                        terminal.process_pending_output();
                         pane.content.update(cx, |_, cx| cx.notify());
                     }
                 });
