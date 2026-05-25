@@ -80,6 +80,11 @@ pub fn open_url(url: &str) {
     let result = spawn_and_reap(command("open").arg(url));
     #[cfg(windows)]
     let result = spawn_and_reap(command("cmd").args(["/C", "start", "", url]));
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    let result: std::io::Result<()> = {
+        log::warn!("open_url is not supported on this platform: {url:?}");
+        Ok(())
+    };
 
     if let Err(e) = result {
         log::warn!("failed to open URL {url:?}: {e}");

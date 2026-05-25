@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
 #[cfg(windows)]
 use std::collections::HashMap;
 #[cfg(windows)]
