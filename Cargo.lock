@@ -5490,6 +5490,7 @@ dependencies = [
  "okena-core",
  "okena-ext-claude",
  "okena-ext-codex",
+ "okena-ext-github",
  "okena-ext-updater",
  "okena-extensions",
  "okena-files",
@@ -5575,6 +5576,21 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "dirs 5.0.1",
+ "gpui",
+ "gpui-component",
+ "log",
+ "okena-core",
+ "okena-extensions",
+ "okena-ui",
+ "parking_lot",
+ "serde_json",
+ "smol",
+]
+
+[[package]]
+name = "okena-ext-github"
+version = "0.1.0"
+dependencies = [
  "gpui",
  "gpui-component",
  "log",
