@@ -105,13 +105,22 @@ pub fn resolve_claude_dir(cx: &App) -> PathBuf {
         .join(".claude")
 }
 
-/// Claude API usage indicator with hover popover.
-pub struct ClaudeUsage {
+/// Global holding a weak handle to the shared usage data entity.
+///
+/// Each window's `ClaudeUsage` view keeps a strong handle, so the data entity
+/// (and its single poll task) lives exactly as long as at least one window
+/// shows the widget — and tears down once they all close.
+struct GlobalClaudeUsageData(WeakEntity<ClaudeUsageData>);
+impl Global for GlobalClaudeUsageData {}
+
+/// Shared usage data + the single background poll task and its wake machinery.
+///
+/// Decoupling this from the per-window view means the usage API is fetched
+/// once for the whole app rather than once per open window. Per-window UI
+/// state (popover, hover) lives on [`ClaudeUsage`] instead.
+struct ClaudeUsageData {
     data: Arc<Mutex<Option<UsageData>>>,
     claude_dir: Arc<Mutex<PathBuf>>,
-    popover_visible: bool,
-    trigger_bounds: Bounds<Pixels>,
-    hover_token: Arc<AtomicU64>,
     /// Send on this channel to wake up the fetch loop and retry immediately.
     wake_tx: smol::channel::Sender<()>,
     /// Whether a wake signal has already been sent (avoids spamming from render).
@@ -287,8 +296,46 @@ fn format_reset_time(ts: &str, include_date: bool) -> String {
     ts.to_string()
 }
 
-impl ClaudeUsage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+impl ClaudeUsageData {
+    /// Get the shared data entity, creating it (and starting the poller) on first use.
+    fn shared(cx: &mut App) -> Entity<Self> {
+        if let Some(existing) = cx
+            .try_global::<GlobalClaudeUsageData>()
+            .and_then(|g| g.0.upgrade())
+        {
+            return existing;
+        }
+        let entity = cx.new(Self::new);
+        cx.set_global(GlobalClaudeUsageData(entity.downgrade()));
+        entity
+    }
+
+    /// Wake the fetch loop, but only if the most recent successful fetch is older
+    /// than [`HOVER_REFETCH_THROTTLE`]. Used to refresh on popover open without
+    /// hammering the API on rapid hover-on/off.
+    fn request_fresh_fetch(&self) {
+        let stale = match *self.last_fetch_at.lock() {
+            None => true,
+            Some(last) => last.elapsed() >= HOVER_REFETCH_THROTTLE,
+        };
+        if !stale {
+            return;
+        }
+        if !self.wake_sent.swap(true, Ordering::SeqCst) {
+            let _ = self.wake_tx.try_send(());
+        }
+    }
+
+    /// Wake the fetch loop once when a view has no data to show (e.g. after the
+    /// extension is toggled on, or the first fetch failed). Only one signal is
+    /// sent until the next successful fetch, to avoid retry storms from render.
+    fn wake_if_no_data(&self) {
+        if !self.wake_sent.swap(true, Ordering::SeqCst) {
+            let _ = self.wake_tx.try_send(());
+        }
+    }
+
+    fn new(cx: &mut Context<Self>) -> Self {
         let data: Arc<Mutex<Option<UsageData>>> = Arc::new(Mutex::new(None));
         let data_for_task = data.clone();
         let (wake_tx, wake_rx) = smol::channel::bounded::<()>(1);
@@ -436,29 +483,35 @@ impl ClaudeUsage {
         Self {
             data,
             claude_dir,
-            popover_visible: false,
-            trigger_bounds: Bounds::default(),
-            hover_token: Arc::new(AtomicU64::new(0)),
             wake_tx,
             wake_sent,
             last_fetch_at,
             _poll_task: poll_task,
         }
     }
+}
 
-    /// Wake the fetch loop, but only if the most recent successful fetch is older
-    /// than [`HOVER_REFETCH_THROTTLE`]. Used to refresh on popover open without
-    /// hammering the API on rapid hover-on/off.
-    fn request_fresh_fetch(&self) {
-        let stale = match *self.last_fetch_at.lock() {
-            None => true,
-            Some(last) => last.elapsed() >= HOVER_REFETCH_THROTTLE,
-        };
-        if !stale {
-            return;
-        }
-        if !self.wake_sent.swap(true, Ordering::SeqCst) {
-            let _ = self.wake_tx.try_send(());
+/// Claude API usage indicator with hover popover.
+///
+/// One of these exists per window; they all share a single [`ClaudeUsageData`]
+/// poller and hold only per-window UI state.
+pub struct ClaudeUsage {
+    data: Entity<ClaudeUsageData>,
+    popover_visible: bool,
+    trigger_bounds: Bounds<Pixels>,
+    hover_token: Arc<AtomicU64>,
+}
+
+impl ClaudeUsage {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let data = ClaudeUsageData::shared(cx);
+        // Re-render this window's widget whenever the shared poller updates.
+        cx.observe(&data, |_, _, cx| cx.notify()).detach();
+        Self {
+            data,
+            popover_visible: false,
+            trigger_bounds: Bounds::default(),
+            hover_token: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -480,7 +533,7 @@ impl ClaudeUsage {
             let _ = this.update(cx, |this, cx| {
                 if hover_token.load(Ordering::SeqCst) == token {
                     this.popover_visible = true;
-                    this.request_fresh_fetch();
+                    this.data.read(cx).request_fresh_fetch();
                     cx.notify();
                 }
             });
@@ -519,7 +572,8 @@ impl ClaudeUsage {
         t: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let data = self.data.lock();
+        let shared = self.data.read(cx);
+        let data = shared.data.lock();
         let data = match data.as_ref() {
             Some(d) if self.popover_visible => d.clone(),
             _ => return div().size_0().into_any_element(),
@@ -831,7 +885,7 @@ impl Render for ClaudeUsage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
 
-        let data = self.data.lock();
+        let data = self.data.read(cx).data.lock();
         let (five_h, seven_d) = match data.as_ref() {
             Some(d) => {
                 let fh = d.five_hour.as_ref().map(|t| t.utilization);
@@ -839,11 +893,10 @@ impl Render for ClaudeUsage {
                 (fh, sd)
             }
             None => {
+                drop(data);
                 // Wake the fetch loop once (e.g. after toggle on/off or if the
-                // first fetch failed). Only send one signal to avoid retry storms.
-                if !self.wake_sent.swap(true, Ordering::SeqCst) {
-                    let _ = self.wake_tx.try_send(());
-                }
+                // first fetch failed). Only one signal is sent to avoid retry storms.
+                self.data.read(cx).wake_if_no_data();
                 return div().size_0().into_any_element();
             }
         };

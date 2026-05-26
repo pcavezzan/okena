@@ -42,18 +42,40 @@ fn theme(cx: &App) -> ThemeColors {
     okena_extensions::theme(cx)
 }
 
-/// Codex (OpenAI API) status indicator with hover popover and click-to-open.
-pub struct CodexStatus {
+/// Global holding a weak handle to the shared status data entity.
+///
+/// Each window's `CodexStatus` view keeps a strong handle, so the data entity
+/// (and its single poll task) lives exactly as long as at least one window
+/// shows the widget — and tears down once they all close.
+struct GlobalCodexStatusData(WeakEntity<CodexStatusData>);
+impl Global for GlobalCodexStatusData {}
+
+/// Shared status data + the single background poll task.
+///
+/// Decoupling this from the per-window view means the status API is fetched
+/// once for the whole app rather than once per open window. Per-window UI
+/// state (popover, hover) lives on [`CodexStatus`] instead.
+struct CodexStatusData {
     data: Arc<Mutex<Option<StatusData>>>,
-    popover_visible: bool,
-    trigger_bounds: Bounds<Pixels>,
-    hover_token: Arc<AtomicU64>,
     /// Background polling task. Cancelled automatically when this entity is dropped.
     _poll_task: Task<()>,
 }
 
-impl CodexStatus {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+impl CodexStatusData {
+    /// Get the shared data entity, creating it (and starting the poller) on first use.
+    fn shared(cx: &mut App) -> Entity<Self> {
+        if let Some(existing) = cx
+            .try_global::<GlobalCodexStatusData>()
+            .and_then(|g| g.0.upgrade())
+        {
+            return existing;
+        }
+        let entity = cx.new(Self::new);
+        cx.set_global(GlobalCodexStatusData(entity.downgrade()));
+        entity
+    }
+
+    fn new(cx: &mut Context<Self>) -> Self {
         let data: Arc<Mutex<Option<StatusData>>> = Arc::new(Mutex::new(None));
         let data_for_task = data.clone();
 
@@ -159,10 +181,32 @@ impl CodexStatus {
 
         Self {
             data,
+            _poll_task: poll_task,
+        }
+    }
+}
+
+/// Codex (OpenAI API) status indicator with hover popover and click-to-open.
+///
+/// One of these exists per window; they all share a single [`CodexStatusData`]
+/// poller and hold only per-window UI state.
+pub struct CodexStatus {
+    data: Entity<CodexStatusData>,
+    popover_visible: bool,
+    trigger_bounds: Bounds<Pixels>,
+    hover_token: Arc<AtomicU64>,
+}
+
+impl CodexStatus {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let data = CodexStatusData::shared(cx);
+        // Re-render this window's widget whenever the shared poller updates.
+        cx.observe(&data, |_, _, cx| cx.notify()).detach();
+        Self {
+            data,
             popover_visible: false,
             trigger_bounds: Bounds::default(),
             hover_token: Arc::new(AtomicU64::new(0)),
-            _poll_task: poll_task,
         }
     }
 
@@ -222,7 +266,8 @@ impl CodexStatus {
         t: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let data = self.data.lock();
+        let shared = self.data.read(cx);
+        let data = shared.data.lock();
         let data = match data.as_ref() {
             Some(d) if self.popover_visible && !d.incidents.is_empty() => d.clone(),
             _ => return div().size_0().into_any_element(),
@@ -354,7 +399,7 @@ impl Render for CodexStatus {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
 
-        let data = self.data.lock();
+        let data = self.data.read(cx).data.lock();
         let (label, color) = match data.as_ref().map(|d| d.status.as_str()) {
             Some("operational") => ("OK", t.metric_normal),
             Some("degraded_performance") => ("Degraded", t.metric_warning),

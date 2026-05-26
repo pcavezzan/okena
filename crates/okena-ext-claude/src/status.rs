@@ -42,18 +42,40 @@ fn theme(cx: &App) -> ThemeColors {
     okena_extensions::theme(cx)
 }
 
-/// Claude Code status indicator with hover popover and click-to-open.
-pub struct ClaudeStatus {
+/// Global holding a weak handle to the shared status data entity.
+///
+/// Each window's `ClaudeStatus` view keeps a strong handle, so the data entity
+/// (and its single poll task) lives exactly as long as at least one window
+/// shows the widget — and tears down once they all close.
+struct GlobalClaudeStatusData(WeakEntity<ClaudeStatusData>);
+impl Global for GlobalClaudeStatusData {}
+
+/// Shared status data + the single background poll task.
+///
+/// Decoupling this from the per-window view means the status API is fetched
+/// once for the whole app rather than once per open window. Per-window UI
+/// state (popover, hover) lives on [`ClaudeStatus`] instead.
+struct ClaudeStatusData {
     data: Arc<Mutex<Option<StatusData>>>,
-    popover_visible: bool,
-    trigger_bounds: Bounds<Pixels>,
-    hover_token: Arc<AtomicU64>,
     /// Background polling task. Cancelled automatically when this entity is dropped.
     _poll_task: Task<()>,
 }
 
-impl ClaudeStatus {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+impl ClaudeStatusData {
+    /// Get the shared data entity, creating it (and starting the poller) on first use.
+    fn shared(cx: &mut App) -> Entity<Self> {
+        if let Some(existing) = cx
+            .try_global::<GlobalClaudeStatusData>()
+            .and_then(|g| g.0.upgrade())
+        {
+            return existing;
+        }
+        let entity = cx.new(Self::new);
+        cx.set_global(GlobalClaudeStatusData(entity.downgrade()));
+        entity
+    }
+
+    fn new(cx: &mut Context<Self>) -> Self {
         let data: Arc<Mutex<Option<StatusData>>> = Arc::new(Mutex::new(None));
         let data_for_task = data.clone();
 
@@ -155,10 +177,32 @@ impl ClaudeStatus {
 
         Self {
             data,
+            _poll_task: poll_task,
+        }
+    }
+}
+
+/// Claude Code status indicator with hover popover and click-to-open.
+///
+/// One of these exists per window; they all share a single [`ClaudeStatusData`]
+/// poller and hold only per-window UI state.
+pub struct ClaudeStatus {
+    data: Entity<ClaudeStatusData>,
+    popover_visible: bool,
+    trigger_bounds: Bounds<Pixels>,
+    hover_token: Arc<AtomicU64>,
+}
+
+impl ClaudeStatus {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let data = ClaudeStatusData::shared(cx);
+        // Re-render this window's widget whenever the shared poller updates.
+        cx.observe(&data, |_, _, cx| cx.notify()).detach();
+        Self {
+            data,
             popover_visible: false,
             trigger_bounds: Bounds::default(),
             hover_token: Arc::new(AtomicU64::new(0)),
-            _poll_task: poll_task,
         }
     }
 
@@ -218,7 +262,8 @@ impl ClaudeStatus {
         t: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let data = self.data.lock();
+        let shared = self.data.read(cx);
+        let data = shared.data.lock();
         let data = match data.as_ref() {
             Some(d) if self.popover_visible && !d.incidents.is_empty() => d.clone(),
             _ => return div().size_0().into_any_element(),
@@ -350,7 +395,7 @@ impl Render for ClaudeStatus {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
 
-        let data = self.data.lock();
+        let data = self.data.read(cx).data.lock();
         let (label, color) = match data.as_ref().map(|d| d.status.as_str()) {
             Some("operational") => ("OK", t.metric_normal),
             Some("degraded_performance") => ("Degraded", t.metric_warning),

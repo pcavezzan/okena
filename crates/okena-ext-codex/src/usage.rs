@@ -28,6 +28,14 @@ fn theme(cx: &App) -> ThemeColors {
     okena_extensions::theme(cx)
 }
 
+/// Global holding a weak handle to the shared usage data entity.
+///
+/// Each window's `CodexUsage` view keeps a strong handle, so the data entity
+/// (and its single poll task) lives exactly as long as at least one window
+/// shows the widget — and tears down once they all close.
+struct GlobalCodexUsageData(WeakEntity<CodexUsageData>);
+impl Global for GlobalCodexUsageData {}
+
 /// A rate limit window from the usage API
 #[derive(Clone)]
 struct RateLimitWindow {
@@ -55,12 +63,13 @@ struct UsageData {
     credits: Option<CreditsInfo>,
 }
 
-/// Codex usage indicator with hover popover.
-pub struct CodexUsage {
+/// Shared usage data + the single background poll task.
+///
+/// Decoupling this from the per-window view means the usage API is fetched
+/// once for the whole app rather than once per open window. Per-window UI
+/// state (popover, hover) lives on [`CodexUsage`] instead.
+struct CodexUsageData {
     data: Arc<Mutex<Option<UsageData>>>,
-    popover_visible: bool,
-    trigger_bounds: Bounds<Pixels>,
-    hover_token: Arc<AtomicU64>,
     /// Background polling task. Cancelled automatically when this entity is dropped.
     _poll_task: Task<()>,
 }
@@ -354,8 +363,21 @@ fn fetch_usage() -> Option<UsageData> {
     })
 }
 
-impl CodexUsage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+impl CodexUsageData {
+    /// Get the shared data entity, creating it (and starting the poller) on first use.
+    fn shared(cx: &mut App) -> Entity<Self> {
+        if let Some(existing) = cx
+            .try_global::<GlobalCodexUsageData>()
+            .and_then(|g| g.0.upgrade())
+        {
+            return existing;
+        }
+        let entity = cx.new(Self::new);
+        cx.set_global(GlobalCodexUsageData(entity.downgrade()));
+        entity
+    }
+
+    fn new(cx: &mut Context<Self>) -> Self {
         let data: Arc<Mutex<Option<UsageData>>> = Arc::new(Mutex::new(None));
         let data_for_task = data.clone();
 
@@ -390,10 +412,32 @@ impl CodexUsage {
 
         Self {
             data,
+            _poll_task: poll_task,
+        }
+    }
+}
+
+/// Codex usage indicator with hover popover.
+///
+/// One of these exists per window; they all share a single [`CodexUsageData`]
+/// poller and hold only per-window UI state.
+pub struct CodexUsage {
+    data: Entity<CodexUsageData>,
+    popover_visible: bool,
+    trigger_bounds: Bounds<Pixels>,
+    hover_token: Arc<AtomicU64>,
+}
+
+impl CodexUsage {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let data = CodexUsageData::shared(cx);
+        // Re-render this window's widget whenever the shared poller updates.
+        cx.observe(&data, |_, _, cx| cx.notify()).detach();
+        Self {
+            data,
             popover_visible: false,
             trigger_bounds: Bounds::default(),
             hover_token: Arc::new(AtomicU64::new(0)),
-            _poll_task: poll_task,
         }
     }
 
@@ -453,7 +497,8 @@ impl CodexUsage {
         t: &ThemeColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let data = self.data.lock();
+        let shared = self.data.read(cx);
+        let data = shared.data.lock();
         let data = match data.as_ref() {
             Some(d) if self.popover_visible => d.clone(),
             _ => return div().size_0().into_any_element(),
@@ -709,7 +754,7 @@ impl Render for CodexUsage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
 
-        let data = self.data.lock();
+        let data = self.data.read(cx).data.lock();
         let (primary, secondary) = match data.as_ref() {
             Some(d) => (
                 d.primary_window
