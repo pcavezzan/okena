@@ -112,6 +112,38 @@ impl SettingsPanel {
                             ),
                     ),
             )
+            .child(section_header("Notifications", &t, cx))
+            .child({
+                let n = s.notifications.clone();
+                section_container(&t)
+                    .child(self.render_toggle(
+                        "desktop-notifications",
+                        "Desktop Notifications",
+                        n.enabled,
+                        // Border only when the sub-toggles follow below.
+                        n.enabled,
+                        |state, val, cx| state.set_notifications_enabled(val, cx),
+                        cx,
+                    ))
+                    .when(n.enabled, |d| {
+                        d.child(self.render_toggle(
+                            "notify-osc",
+                            "Terminal Alerts (OSC 9 / 777)",
+                            n.osc,
+                            true,
+                            |state, val, cx| state.set_notifications_osc(val, cx),
+                            cx,
+                        ))
+                        .child(self.render_toggle(
+                            "notify-bell",
+                            "Terminal Bell",
+                            n.bell,
+                            false,
+                            |state, val, cx| state.set_notifications_bell(val, cx),
+                            cx,
+                        ))
+                    })
+            })
     }
 
     fn render_header_density_row(

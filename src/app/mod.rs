@@ -2,6 +2,7 @@ mod detached_overlays;
 mod detached_terminals;
 mod extras;
 pub mod headless;
+mod notifications;
 mod remote_commands;
 
 pub use detached_overlays::open_detached_overlay;
@@ -205,6 +206,10 @@ pub struct Okena {
     /// be wired with the same singleton main was wired with at startup
     /// (`open_extra_window` calls `set_remote_manager` on the new view).
     remote_manager: Entity<RemoteConnectionManager>,
+    /// Sender handed to desktop-notification threads. When a user clicks an
+    /// XDG notification, the thread sends a `NotificationJump` here and the
+    /// click loop focuses the originating pane. See `app/notifications.rs`.
+    notification_jump_tx: async_channel::Sender<notifications::NotificationJump>,
 }
 
 impl Okena {
@@ -377,6 +382,9 @@ impl Okena {
         // Create bridge channel and start command loop
         let (bridge_tx, bridge_rx) = bridge::bridge_channel();
 
+        // Channel for clicked desktop notifications → "jump to that pane".
+        let (notification_jump_tx, notification_jump_rx) = async_channel::unbounded();
+
         let main_window_handle = window.window_handle();
 
         let mut manager = Self {
@@ -403,6 +411,7 @@ impl Okena {
             force_remote,
             service_manager: service_manager.clone(),
             remote_manager: remote_manager.clone(),
+            notification_jump_tx,
         };
 
         // Propagate claude config dir to spawned PTYs so `claude` CLI invocations inside
@@ -416,6 +425,9 @@ impl Okena {
 
         // Start PTY event loop (centralized for all windows)
         manager.start_pty_event_loop(pty_events, cx);
+
+        // Route clicked desktop notifications back to their originating pane.
+        manager.start_notification_click_loop(notification_jump_rx, cx);
 
         // Start remote command bridge loop
         let local_backend: Arc<dyn crate::terminal::backend::TerminalBackend> =
@@ -806,6 +818,14 @@ impl Okena {
                                 }
                             });
                         }
+                    }
+
+                    // Drain OSC 9 / OSC 777 notifications for terminals that
+                    // produced output this batch and raise OS notifications
+                    // for background panes. Runs here (not in a pane's render)
+                    // so background tabs and detached windows are covered too.
+                    if !dirty_terminal_ids.is_empty() {
+                        this.process_terminal_notifications(&dirty_terminal_ids, cx);
                     }
 
                     if !exit_events.is_empty() {

@@ -61,6 +61,10 @@ serde_yaml = "0.9"
 sysinfo = "0.33"
 libc = "0.2"
 
+# Native desktop notifications (libnotify/dbus on Linux, NSUserNotification on
+# macOS, WinRT toast on Windows). Used for OSC 9 / OSC 777 terminal alerts.
+notify-rust = "4"
+
 # Utilities
 uuid = { version = "1.10", features = ["v4"] }
 dirs = "5.0"

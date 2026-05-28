@@ -113,6 +113,22 @@ impl SettingsState {
     setting_setter!(set_terminal_ctrl_c_copies_selection, terminal_ctrl_c_copies_selection, bool);
     setting_setter!(set_blame_visible, blame_visible, bool);
 
+    /// Master switch for native desktop notifications (opt-in).
+    pub fn set_notifications_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.settings.notifications.enabled = value;
+        self.save_and_notify(cx);
+    }
+    /// Toggle notifications for OSC 9 / OSC 777 terminal alerts.
+    pub fn set_notifications_osc(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.settings.notifications.osc = value;
+        self.save_and_notify(cx);
+    }
+    /// Toggle notifications for the terminal bell.
+    pub fn set_notifications_bell(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.settings.notifications.bell = value;
+        self.save_and_notify(cx);
+    }
+
     /// Set file finder "show ignored" preference (persisted default for future opens).
     pub fn set_file_finder_show_ignored(&mut self, value: bool, cx: &mut Context<Self>) {
         self.settings.file_finder.show_ignored = value;

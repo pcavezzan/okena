@@ -120,7 +120,6 @@ impl FocusManager {
     }
 
     /// Check if a specific terminal is currently focused
-    #[allow(dead_code)]
     pub fn is_focused(&self, project_id: &str, layout_path: &[usize]) -> bool {
         self.current_focus.as_ref().is_some_and(|f| {
             f.project_id == project_id && f.layout_path == layout_path

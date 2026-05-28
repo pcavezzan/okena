@@ -109,6 +109,32 @@ fn default_true() -> bool {
     true
 }
 
+/// Native desktop notifications for background-terminal activity.
+///
+/// Opt-in: the whole feature is off until `enabled` is turned on. The
+/// per-source flags then choose which events raise a notification. None of
+/// these fire for the pane the user is actively looking at (the focused pane
+/// in a foreground window).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationSettings {
+    /// Master switch. Off by default — the feature is opt-in.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Raise a notification for `OSC 9` / `OSC 777` terminal alerts
+    /// (e.g. `printf '\033]9;done\007'`, Claude Code's "waiting for input").
+    #[serde(default = "default_true")]
+    pub osc: bool,
+    /// Raise a notification when a background terminal rings the bell (BEL).
+    #[serde(default = "default_true")]
+    pub bell: bool,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self { enabled: false, osc: true, bell: true }
+    }
+}
+
 /// Window state for a detached overlay (windowed / maximized / fullscreen).
 /// The bounds in `DetachedWindowBounds` are the *restore* bounds — what the
 /// window snaps back to when leaving maximized or fullscreen mode.
@@ -343,6 +369,11 @@ pub struct AppSettings {
     /// (two rows with extended git info).
     #[serde(default)]
     pub header_density: HeaderDensity,
+
+    /// Native desktop notifications for background-terminal activity
+    /// (OSC 9/777 alerts and the bell). Opt-in — see [`NotificationSettings`].
+    #[serde(default)]
+    pub notifications: NotificationSettings,
 }
 
 impl Default for AppSettings {
@@ -387,6 +418,7 @@ impl Default for AppSettings {
             terminal_ctrl_c_copies_selection: false,
             file_finder: FileFinderSettings::default(),
             header_density: HeaderDensity::default(),
+            notifications: NotificationSettings::default(),
         }
     }
 }
