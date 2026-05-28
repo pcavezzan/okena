@@ -151,6 +151,13 @@ pub struct Terminal {
     /// exactly once instead of on every batch while `has_bell` stays set.
     pub(super) bell_pending: Arc<AtomicBool>,
 
+    /// Sticky "this pane raised a desktop notification" flag, mirroring
+    /// `has_bell` but for OSC 9/777 alerts. Set by the app when it actually
+    /// fires a notification (so it already honors the user's settings and the
+    /// focused-pane suppression); drives the pane's attention border; cleared
+    /// on focus. Not shared with the listener — GPUI thread only.
+    pub(super) has_notification: AtomicBool,
+
     /// Pending OSC 52 clipboard writes requested by the running app. `Arc`
     /// shared with `ZedEventListener`: pushed during `process_output`,
     /// drained by the GPUI render path via `drain_clipboard_writes`.
@@ -331,6 +338,7 @@ impl Terminal {
             title,
             has_bell,
             bell_pending,
+            has_notification: AtomicBool::new(false),
             pending_clipboard,
             palette,
             pending_output: Mutex::new(Vec::new()),

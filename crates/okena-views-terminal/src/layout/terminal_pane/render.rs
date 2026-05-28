@@ -73,6 +73,12 @@ impl<D: ActionDispatch + Send + Sync> Render for TerminalPane<D> {
                 terminal.clear_bell();
             }
 
+        let has_notification = self.terminal.as_ref().is_some_and(|t| t.has_notification());
+        if is_focused && has_notification
+            && let Some(ref terminal) = self.terminal {
+                terminal.clear_notification();
+            }
+
         if is_focused
             && let Some(ref terminal) = self.terminal
                 && terminal.is_waiting_for_input() {
@@ -88,10 +94,11 @@ impl<D: ActionDispatch + Send + Sync> Render for TerminalPane<D> {
         let show_focused_border = terminal_view_settings(cx).show_focused_border;
         let is_waiting = !is_focused && self.terminal.as_ref()
             .is_some_and(|t| t.is_waiting_for_input());
-        let show_border = (is_focused && show_focused_border) || has_bell || is_waiting;
+        let show_border = (is_focused && show_focused_border) || has_bell || has_notification || is_waiting;
+        // OSC 9/777 notifications share the bell's attention color.
         let border_color = if is_focused && show_focused_border {
             rgb(t.border_focused)
-        } else if has_bell {
+        } else if has_bell || has_notification {
             rgb(t.border_bell)
         } else {
             rgb(t.border_idle)

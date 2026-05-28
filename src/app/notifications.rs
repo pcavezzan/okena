@@ -166,7 +166,7 @@ impl Okena {
                 .map(|(_, name, _)| name.clone())
                 .unwrap_or_else(|| "Okena".to_string());
 
-            if n.osc {
+            if n.osc && !osc.is_empty() {
                 for notification in osc {
                     let title = notification.title.unwrap_or_else(|| fallback_title.clone());
                     show_notification(
@@ -175,6 +175,12 @@ impl Okena {
                         jump.clone(),
                         self.notification_jump_tx.clone(),
                     );
+                }
+                // Light the pane's attention border (mirrors the bell), cleared
+                // when the user focuses it. Only set on the fire path, so it
+                // already respects the settings + focused-pane suppression.
+                if let Some(term) = self.terminals.lock().get(&tid) {
+                    term.mark_notification();
                 }
             }
 

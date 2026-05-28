@@ -59,6 +59,27 @@ impl Terminal {
             .swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Mark that this pane raised an OSC 9/777 desktop notification. Drives the
+    /// pane's attention border until focus clears it. Set by the app when it
+    /// actually fires a notification, so it inherits the user's settings and
+    /// the focused-pane suppression. Mirrors the sticky `has_bell`.
+    pub fn mark_notification(&self) {
+        self.has_notification
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether this pane has an unseen OSC 9/777 notification (drives the border).
+    pub fn has_notification(&self) -> bool {
+        self.has_notification
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clear the unseen-notification flag (call when the pane receives focus).
+    pub fn clear_notification(&self) {
+        self.has_notification
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Get the initial working directory for this terminal
     pub fn initial_cwd(&self) -> &str {
         &self.initial_cwd
