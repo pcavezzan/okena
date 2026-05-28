@@ -7,11 +7,21 @@ use crate::state::WorktreeMetadata;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// When true, the workspace was loaded from a fallback default (load failed).
 /// Auto-save MUST NOT overwrite the real workspace.json in this state.
 static LOADED_FROM_DEFAULT: AtomicBool = AtomicBool::new(false);
+
+/// Process-level mutex serializing workspace saves.
+///
+/// The debounced auto-save dispatches `save_workspace` onto `smol::unblock`'s
+/// thread pool; during a burst of mutations (e.g. dragging a pane resize) two
+/// saves can run concurrently. Without this lock they race on the shared
+/// `workspace.json.tmp` path — both create+write it, then the first `rename`
+/// consumes it and the second fails with ENOENT ("No such file or directory").
+static WORKSPACE_LOCK: Mutex<()> = Mutex::new(());
 
 // Re-export from settings module for backward compatibility
 #[allow(unused_imports)]
@@ -370,6 +380,8 @@ pub fn load_workspace(backend: SessionBackend) -> Result<WorkspaceData> {
 /// 4. Atomic write — tmp + fsync + rename prevents partial writes
 pub fn save_workspace(data: &WorkspaceData) -> Result<()> {
     let _slow = okena_core::timing::SlowGuard::new("save_workspace");
+    // Serialize concurrent saves so they don't race on the shared tmp path.
+    let _guard = WORKSPACE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Layer 1: block save if we loaded from fallback default
     if LOADED_FROM_DEFAULT.load(Ordering::Relaxed) {
         log::warn!("Skipping workspace save — loaded from fallback default, protecting file on disk.");
