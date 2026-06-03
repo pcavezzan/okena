@@ -482,6 +482,21 @@ impl ProjectColumn {
                 .into_any_element()
         };
 
+        // The focused project's column is shown even while the project is
+        // hidden from the overview (see compute_visible_projects focus
+        // override). In that state this button un-hides, so its icon and
+        // tooltip must reflect the real hidden state rather than always
+        // reading "Hide Project".
+        let is_hidden = self
+            .workspace
+            .read(cx)
+            .is_project_hidden(self.window_id, &self.project_id);
+        let (vis_icon, vis_tooltip): (&'static str, &'static str) = if is_hidden {
+            ("icons/eye.svg", "Show Project")
+        } else {
+            ("icons/eye-off.svg", "Hide Project")
+        };
+
         let right_controls = h_flex()
             .gap(px(8.0))
             .child(self.render_hidden_taskbar(project, t, cx))
@@ -517,12 +532,12 @@ impl ProjectColumn {
                             })
                             .child(
                                 svg()
-                                    .path("icons/eye-off.svg")
+                                    .path(vis_icon)
                                     .size(px(14.0))
                                     .text_color(rgb(t.text_secondary)),
                             )
-                            .tooltip(|_window, cx| {
-                                Tooltip::new("Hide Project").build(_window, cx)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::new(vis_tooltip).build(_window, cx)
                             }),
                     )
                     .child(
