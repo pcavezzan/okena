@@ -37,13 +37,42 @@ use std::sync::Arc;
 
 use std::net::IpAddr;
 
-// Global allocator: mimalloc by default (handles okena's high-churn,
-// multi-threaded small-allocation workload without the RSS blowup glibc malloc
-// exhibits). When the dhat heap profiler is enabled we hand the global
-// allocator over to dhat instead so it can record every allocation.
-#[cfg(not(feature = "dhat-heap"))]
+// Global allocator. glibc malloc fragments badly under okena's high-churn,
+// multi-threaded small-allocation workload, so we override it. When the dhat
+// heap profiler is enabled we hand the global allocator over to dhat instead so
+// it can record every allocation.
+//
+// Only one global allocator may exist, so the cfgs are mutually exclusive with
+// precedence dhat > jemalloc(unix) > mimalloc:
+//   - Unix  (Linux/macOS): jemalloc. Shares a small fixed set of arenas across
+//     all threads (narenas:4 below) instead of mimalloc's per-thread heaps, so
+//     okena's ~90 threads stop each pinning their own segments — the dominant
+//     per-thread RSS overhead (cut anon heap ~440→180 MB).
+//   - Windows: mimalloc (jemalloc/tikv-jemalloc-sys doesn't build under MSVC).
+//   - Unix with `--features mimalloc` and jemalloc off: mimalloc, for A/B.
+#[cfg(all(unix, feature = "jemalloc", not(feature = "dhat-heap")))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(
+    feature = "mimalloc",
+    not(all(unix, feature = "jemalloc")),
+    not(feature = "dhat-heap")
+))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// jemalloc runtime tuning, read from this weak symbol at init:
+//   narenas:4        — cap arenas at 4 (vs jemalloc's default 4*ncpu), so many
+//                      threads pack into a few shared arenas instead of spreading
+//                      live data across dozens of half-used ones.
+//   dirty_decay_ms:1000 / muzzy_decay_ms:0 — return freed pages to the OS
+//                      promptly (muzzy immediately via MADV_DONTNEED) so RSS
+//                      tracks live usage instead of high-water mark.
+#[cfg(all(unix, feature = "jemalloc", not(feature = "dhat-heap")))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "_rjem_malloc_conf")]
+pub static MALLOC_CONF: &[u8] = b"narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:0\0";
 
 // Heap profiler (opt-in via `--features dhat-heap`). When enabled, dhat's
 // allocator wraps the system allocator to record every allocation; the

@@ -69,12 +69,13 @@ notify-rust = "4"
 uuid = { version = "1.10", features = ["v4"] }
 dirs = "5.0"
 
-# Global allocator. glibc malloc fragments badly under okena's high-churn,
-# multi-threaded small-allocation workload (git-status polling + per-frame
-# render/layout), so RSS climbs into the GBs without a true leak. mimalloc
-# fragments far less and returns memory to the OS. Bypassed when the dhat
-# heap profiler is active (see src/main.rs).
-mimalloc = "0.1"
+# Global allocator — see [features] for the per-target default. glibc malloc
+# fragments badly under okena's high-churn, multi-threaded small-allocation
+# workload (git-status polling + per-frame render/layout), so RSS climbs into
+# the GBs. mimalloc is the default on Windows (jemalloc doesn't build on MSVC)
+# and stays available on Unix via `--features mimalloc` for comparison. Bypassed
+# when the dhat heap profiler is active (see src/main.rs).
+mimalloc = { version = "0.1", optional = true }
 
 # Heap profiler (opt-in via `--features dhat-heap`). Off by default so it never
 # touches normal builds — see [features] and src/main.rs.
@@ -128,6 +129,23 @@ subtle = "2.5"
 data-encoding = "2.6"
 
 [features]
+# Per-target default allocator: jemalloc on Unix (the `tikv-jemallocator` dep is
+# Unix-only — see [target.'cfg(unix)'.dependencies]), mimalloc on Windows. Both
+# feature flags are enabled by `default`; src/main.rs picks the right one per
+# target with precedence dhat > jemalloc(unix) > mimalloc, so the unused crate
+# just isn't installed as the global allocator. Override on Unix with
+# `--no-default-features --features mimalloc` (or `glibc` via plain
+# `--no-default-features`).
+default = ["jemalloc", "mimalloc"]
+mimalloc = ["dep:mimalloc"]
+
+# jemalloc: default on Unix. Shares a small fixed set of arenas across all
+# threads (narenas:N in src/main.rs) instead of mimalloc's per-thread heaps, so
+# okena's ~90 threads don't each pin their own segments — cut anon-heap RSS
+# ~440→180 MB in testing. No-op on Windows (dep is Unix-only). Builds the C
+# library from source (needs a C toolchain).
+jemalloc = ["dep:tikv-jemallocator"]
+
 # Enable the dhat in-process heap profiler. Build with:
 #   cargo run --profile profiling --features dhat-heap
 # On exit it writes dhat-heap.json (view at
@@ -146,6 +164,12 @@ strip = false
 [dev-dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", features = ["test-support"] }
 tempfile = "3"
+
+# jemalloc is the default allocator on Unix (Linux + macOS). Kept Unix-only
+# because tikv-jemalloc-sys doesn't build under MSVC; Windows uses mimalloc.
+# Enabled by the `jemalloc` feature (in `default`); installed by src/main.rs.
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { version = "0.6", optional = true }
 
 # Pin core-text to 21.0.x to avoid core-graphics 0.24/0.25 conflict in zed-font-kit
 [target.'cfg(target_os = "macos")'.dependencies]
